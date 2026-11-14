@@ -14,6 +14,7 @@ export interface LessonConfig {
 
 export interface StudentResponse {
   id: string;
+  studentId: string;
   studentName: string;
   classGroup: string;
   reflectionText: string;

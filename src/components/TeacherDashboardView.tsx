@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Check, CheckCircle2, Clock, Download, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react';
+import { Check, CheckCircle2, Clock, Download, ExternalLink, LayoutGrid, RefreshCw, Search, Settings2, Table2, Trash2 } from 'lucide-react';
 import {
   deleteStudentResponse,
   saveLessonConfig,
   updateTeacherReview,
   type StorageMode,
 } from '../lib/classroomApi.ts';
+import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
 import type { LessonConfig, RubricLevel, StudentResponse } from '../types.ts';
 
 interface TeacherDashboardViewProps {
@@ -48,6 +49,8 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [rubricFilter, setRubricFilter] = useState<'전체' | '미평가' | '상' | '중' | '하'>('전체');
+  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  const [sortOrder, setSortOrder] = useState<'studentId' | 'latest'>('studentId');
   const [showLessonEditor, setShowLessonEditor] = useState(!lesson.isCustomized);
 
   const [eraTitle, setEraTitle] = useState(lesson.eraTitle);
@@ -59,6 +62,9 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const [shareWithClass, setShareWithClass] = useState(lesson.shareWithClass);
   const [savingLesson, setSavingLesson] = useState(false);
   const [lessonSavedNotice, setLessonSavedNotice] = useState('');
+
+  const previewYouTube = parseYouTubeUrl(audioOrLinkUrl);
+  const previewValidUrl = isValidHttpUrl(audioOrLinkUrl);
 
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, string>>({});
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
@@ -73,10 +79,11 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   }, [responses]);
 
   const filteredResponses = useMemo(() => {
-    return responses.filter((r) => {
+    const matched = responses.filter((r) => {
       const q = searchTerm.trim().toLowerCase();
       const matchesQuery =
         !q ||
+        r.studentId.toLowerCase().includes(q) ||
         r.studentName.toLowerCase().includes(q) ||
         r.classGroup.toLowerCase().includes(q) ||
         r.reflectionText.toLowerCase().includes(q) ||
@@ -91,7 +98,17 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
 
       return matchesQuery && matchesRubric;
     });
-  }, [responses, searchTerm, rubricFilter]);
+
+    return [...matched].sort((a, b) => {
+      if (sortOrder === 'studentId') {
+        const idCompare = (a.studentId || 'zzzz').localeCompare(b.studentId || 'zzzz', 'ko', {
+          numeric: true,
+        });
+        if (idCompare !== 0) return idCompare;
+      }
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+  }, [responses, searchTerm, rubricFilter, sortOrder]);
 
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,7 +157,8 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
 
   const handleExportCsv = () => {
     const headers = [
-      '학번·이름',
+      '학번',
+      '이름',
       '반·모둠',
       '시대 상황 대입 감성 문장',
       '지금 시대에 대한 한 줄 생각',
@@ -149,8 +167,9 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
       '입력 시각',
     ];
     const escapeCell = (val: string) => `"${val.replace(/"/g, '""')}"`;
-    const rows = responses.map((r) =>
+    const rows = filteredResponses.map((r) =>
       [
+        r.studentId,
         r.studentName,
         r.classGroup,
         r.reflectionText,
@@ -304,7 +323,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
 
             <div>
               <label htmlFor="audioOrLinkUrl" className="block text-xs font-medium text-slate-700">
-                감상 음원 · 영상 링크 (선택, https://...)
+                감상곡 유튜브 · 음원 링크 (선택, https://...)
               </label>
               <input
                 id="audioOrLinkUrl"
@@ -312,9 +331,41 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                 maxLength={500}
                 value={audioOrLinkUrl}
                 onChange={(e) => setAudioOrLinkUrl(e.target.value)}
-                placeholder="예: https://www.youtube.com/..."
+                placeholder="예: https://www.youtube.com/watch?v=... 또는 https://youtu.be/..."
                 className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-sm"
               />
+              {previewYouTube ? (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs font-medium text-teal-800">
+                    유튜브 미리보기 확인됨 — 적용하면 학생 화면에서도 바로 재생할 수 있습니다.
+                  </p>
+                  <div className="aspect-video w-full max-w-md overflow-hidden rounded-lg bg-slate-900">
+                    <iframe
+                      src={previewYouTube.embedUrl}
+                      title="감상곡 유튜브 미리보기"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      allowFullScreen
+                      className="h-full w-full border-0"
+                    />
+                  </div>
+                  <a
+                    href={previewYouTube.watchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-[40px] items-center gap-1.5 text-xs font-medium text-slate-700 underline underline-offset-4 hover:text-slate-900"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>새 창에서 유튜브 링크 확인하기</span>
+                  </a>
+                </div>
+              ) : audioOrLinkUrl.trim() ? (
+                <p className="mt-1.5 text-xs text-slate-500">
+                  {previewValidUrl
+                    ? '일반 웹 링크로 인식되었습니다. 학생 화면에는 바로가기 버튼으로 연결됩니다.'
+                    : '유튜브 주소(youtube.com 또는 youtu.be)나 https:// 로 시작하는 전체 주소를 입력해 주세요.'}
+                </p>
+              ) : null}
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -407,20 +458,70 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         </div>
       </section>
 
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-md sm:flex-1">
-          <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-            aria-hidden="true"
-          />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="이름, 반·모둠, 문장 내용 검색..."
-            className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-sm"
-          />
+      {/* Filter, Sort, and View Mode Bar */}
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative w-full lg:max-w-md lg:flex-1">
+            <Search
+              className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              aria-hidden="true"
+            />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="학번, 이름, 반·모둠, 문장 내용 검색..."
+              className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-sm"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Sort order segmented control */}
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="정렬 기준">
+              <button
+                type="button"
+                onClick={() => setSortOrder('studentId')}
+                className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  sortOrder === 'studentId' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                학번순
+              </button>
+              <button
+                type="button"
+                onClick={() => setSortOrder('latest')}
+                className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  sortOrder === 'latest' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                최신순
+              </button>
+            </div>
+
+            {/* View mode segmented control */}
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="보기 방식">
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  viewMode === 'table' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Table2 className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>표로 모아보기</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('cards')}
+                className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  viewMode === 'cards' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>카드로 평가·피드백</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="평가 상태 필터">
@@ -441,13 +542,75 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Responses List */}
+      {/* Responses List / Aggregated Table */}
       {filteredResponses.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center sm:p-12">
           <p className="text-base font-medium text-slate-900">조건에 맞는 학생 응답이 없습니다</p>
           <p className="mt-1.5 text-sm text-slate-500">
-            학생 화면에서 감성 문장을 입력하면 이곳에서 바로 확인할 수 있습니다.
+            학생 화면에서 학번·이름과 감성 문장을 입력하면 이곳에 데이터가 모여집니다.
           </p>
+        </div>
+      ) : viewMode === 'table' ? (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
+                  <th className="px-4 py-3 whitespace-nowrap">학번</th>
+                  <th className="px-4 py-3 whitespace-nowrap">이름</th>
+                  <th className="px-4 py-3 whitespace-nowrap">반·모둠</th>
+                  <th className="px-4 py-3">시대 상황 대입 감성 문장</th>
+                  <th className="px-4 py-3">지금 시대 한 줄</th>
+                  <th className="px-4 py-3 whitespace-nowrap">평가</th>
+                  <th className="px-4 py-3 whitespace-nowrap">입력 시각</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">관리</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {filteredResponses.map((item) => (
+                  <tr key={item.id} className="align-top hover:bg-slate-50/70">
+                    <td className="px-4 py-3.5 font-mono text-xs font-medium tabular-nums text-slate-900 whitespace-nowrap">
+                      {item.studentId || '-'}
+                    </td>
+                    <td className="px-4 py-3.5 font-medium text-slate-900 whitespace-nowrap">
+                      {item.studentName}
+                    </td>
+                    <td className="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
+                      {item.classGroup || '-'}
+                    </td>
+                    <td className="max-w-sm px-4 py-3.5 text-xs leading-relaxed text-slate-800 whitespace-pre-line">
+                      {item.reflectionText}
+                    </td>
+                    <td className="max-w-xs px-4 py-3.5 text-xs leading-relaxed text-slate-600">
+                      {item.presentConnection || '-'}
+                    </td>
+                    <td className="px-4 py-3.5 text-xs font-medium text-slate-800 whitespace-nowrap">
+                      {item.rubricLevel || '미평가'}
+                    </td>
+                    <td className="px-4 py-3.5 font-mono text-xs tabular-nums text-slate-500 whitespace-nowrap">
+                      {formatDateTime(item.updatedAt)}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setViewMode('cards');
+                          window.setTimeout(() => {
+                            document
+                              .getElementById(`response-card-${item.id}`)
+                              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }, 50);
+                        }}
+                        className="min-h-[36px] rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+                      >
+                        피드백
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">
@@ -457,9 +620,18 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
             const isSaved = savedRowId === item.id;
 
             return (
-              <article key={item.id} className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+              <article
+                id={`response-card-${item.id}`}
+                key={item.id}
+                className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6"
+              >
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3.5">
                   <div className="flex flex-wrap items-center gap-2 text-sm">
+                    {item.studentId && (
+                      <span className="font-mono font-medium tabular-nums text-slate-700">
+                        {item.studentId}
+                      </span>
+                    )}
                     <span className="font-semibold text-slate-900">{item.studentName}</span>
                     {item.classGroup && (
                       <>

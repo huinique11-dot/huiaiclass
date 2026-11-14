@@ -65,7 +65,11 @@ function readLocalResponses(): StudentResponse[] {
     const raw = window.localStorage.getItem(DRAFT_RESPONSES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as StudentResponse[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => ({
+      ...(item as StudentResponse),
+      studentId: typeof item?.studentId === 'string' ? item.studentId : '',
+    }));
   } catch {
     return [];
   }
@@ -127,6 +131,7 @@ export async function saveLessonConfig(
 
 export async function submitStudentResponse(payload: {
   id?: string;
+  studentId: string;
   studentName: string;
   classGroup: string;
   reflectionText: string;
@@ -136,6 +141,7 @@ export async function submitStudentResponse(payload: {
     const apiResult = await fetchApiJson<StudentResponse>(`/api/responses/${payload.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
+        studentId: payload.studentId,
         studentName: payload.studentName,
         classGroup: payload.classGroup,
         reflectionText: payload.reflectionText,
@@ -149,6 +155,7 @@ export async function submitStudentResponse(payload: {
     const apiResult = await fetchApiJson<StudentResponse>('/api/responses', {
       method: 'POST',
       body: JSON.stringify({
+        studentId: payload.studentId,
         studentName: payload.studentName,
         classGroup: payload.classGroup,
         reflectionText: payload.reflectionText,
@@ -167,6 +174,7 @@ export async function submitStudentResponse(payload: {
     if (idx !== -1) {
       const updated: StudentResponse = {
         ...list[idx],
+        studentId: payload.studentId,
         studentName: payload.studentName,
         classGroup: payload.classGroup,
         reflectionText: payload.reflectionText,
@@ -181,6 +189,7 @@ export async function submitStudentResponse(payload: {
 
   const created: StudentResponse = {
     id: crypto.randomUUID ? crypto.randomUUID() : `local-${Date.now()}`,
+    studentId: payload.studentId,
     studentName: payload.studentName,
     classGroup: payload.classGroup,
     reflectionText: payload.reflectionText,

@@ -90,6 +90,15 @@ export default function App() {
     }
   };
 
+  const handleStartNewStudent = () => {
+    setMyResponseId(null);
+    try {
+      window.localStorage.removeItem(MY_RESPONSE_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
   const scrollToWorksheet = () => {
     setActiveTab('activity');
     window.setTimeout(() => {
@@ -97,7 +106,7 @@ export default function App() {
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
-      const input = document.getElementById('studentName');
+      const input = document.getElementById('studentId') ?? document.getElementById('studentName');
       if (input instanceof HTMLInputElement) {
         input.focus({ preventScroll: true });
       }
@@ -239,6 +248,7 @@ export default function App() {
             storageMode={storageMode}
             myResponse={myResponse}
             onSaved={handleSavedResponse}
+            onStartNewStudent={handleStartNewStudent}
             onGoToGallery={() => setActiveTab('gallery')}
             formRef={formRef}
           />

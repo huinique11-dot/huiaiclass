@@ -155,17 +155,20 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
               >
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                    <div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {item.studentId && (
+                        <span className="font-mono tabular-nums text-slate-600">{item.studentId}</span>
+                      )}
                       <span className="font-semibold text-slate-900">{item.studentName}</span>
                       {item.classGroup && (
                         <>
-                          <span className="mx-1.5" aria-hidden="true">·</span>
+                          <span aria-hidden="true">·</span>
                           <span>{item.classGroup}</span>
                         </>
                       )}
                       {isMine && (
                         <>
-                          <span className="mx-1.5" aria-hidden="true">·</span>
+                          <span aria-hidden="true">·</span>
                           <span className="font-medium text-teal-700">내가 쓴 글</span>
                         </>
                       )}

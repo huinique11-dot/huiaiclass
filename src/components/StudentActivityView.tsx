@@ -9,6 +9,7 @@ import {
   PencilLine,
 } from 'lucide-react';
 import { submitStudentResponse, type StorageMode } from '../lib/classroomApi.ts';
+import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
 import type { LessonConfig, StudentResponse } from '../types.ts';
 
 interface StudentActivityViewProps {
@@ -16,6 +17,7 @@ interface StudentActivityViewProps {
   storageMode: StorageMode;
   myResponse: StudentResponse | null;
   onSaved: (saved: StudentResponse, nextMode: StorageMode) => void;
+  onStartNewStudent: () => void;
   onGoToGallery: () => void;
   formRef: React.RefObject<HTMLFormElement | null>;
 }
@@ -38,9 +40,11 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
   storageMode,
   myResponse,
   onSaved,
+  onStartNewStudent,
   onGoToGallery,
   formRef,
 }) => {
+  const [studentId, setStudentId] = useState(myResponse?.studentId ?? '');
   const [studentName, setStudentName] = useState(myResponse?.studentName ?? '');
   const [classGroup, setClassGroup] = useState(myResponse?.classGroup ?? '');
   const [reflectionText, setReflectionText] = useState(myResponse?.reflectionText ?? '');
@@ -53,12 +57,18 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
 
   useEffect(() => {
     if (myResponse) {
+      setStudentId(myResponse.studentId);
       setStudentName(myResponse.studentName);
       setClassGroup(myResponse.classGroup);
       setReflectionText(myResponse.reflectionText);
       setPresentConnection(myResponse.presentConnection);
       setIsEditing(false);
     } else {
+      setStudentId('');
+      setStudentName('');
+      setClassGroup('');
+      setReflectionText('');
+      setPresentConnection('');
       setIsEditing(true);
     }
   }, [myResponse?.id]);
@@ -68,11 +78,16 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
     setErrorMsg('');
     setStatusNotice('');
 
+    const trimmedId = studentId.trim();
     const trimmedName = studentName.trim();
     const trimmedReflection = reflectionText.trim();
 
+    if (!trimmedId) {
+      setErrorMsg('학번을 입력해 주세요.');
+      return;
+    }
     if (!trimmedName) {
-      setErrorMsg('학번과 이름을 입력해 주세요.');
+      setErrorMsg('이름을 입력해 주세요.');
       return;
     }
     if (!trimmedReflection) {
@@ -84,6 +99,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
     try {
       const result = await submitStudentResponse({
         id: myResponse?.id,
+        studentId: trimmedId,
         studentName: trimmedName,
         classGroup: classGroup.trim(),
         reflectionText: trimmedReflection,
@@ -109,6 +125,8 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
   };
 
   const needsSetup = (val: string) => val.includes('[확인 필요]');
+  const youtubeInfo = parseYouTubeUrl(lesson.audioOrLinkUrl);
+  const hasExternalUrl = isValidHttpUrl(lesson.audioOrLinkUrl);
 
   return (
     <div className="space-y-8 sm:space-y-10">
@@ -123,8 +141,8 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
         </div>
 
         <h1 className="mt-3 max-w-3xl text-2xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
-          <span className="block">무엇을 욕망했는가</span>
-          <span className="mt-1.5 block">-음악으로 시대 읽고 공감하기</span>
+          <span className="block font-bold">무엇을 욕망했는가</span>
+          <span className="mt-1.5 block">ㅡ 음악으로 시대 읽고 공감하기</span>
         </h1>
 
         <p className="mt-3.5 max-w-3xl text-sm leading-relaxed text-slate-600 sm:text-base">
@@ -211,7 +229,29 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
               >
                 {lesson.songTitle}
               </p>
-              {lesson.audioOrLinkUrl ? (
+              {youtubeInfo ? (
+                <div className="mt-3 space-y-2.5">
+                  <div className="aspect-video w-full overflow-hidden rounded-lg bg-slate-900">
+                    <iframe
+                      src={youtubeInfo.embedUrl}
+                      title={`${lesson.songTitle} 감상 영상`}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      allowFullScreen
+                      className="h-full w-full border-0"
+                    />
+                  </div>
+                  <a
+                    href={youtubeInfo.watchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-100 whitespace-nowrap"
+                  >
+                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                    <span>유튜브에서 직접 열기</span>
+                  </a>
+                </div>
+              ) : hasExternalUrl ? (
                 <a
                   href={lesson.audioOrLinkUrl}
                   target="_blank"
@@ -222,8 +262,8 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                   <span>감상 음원·영상 열기</span>
                 </a>
               ) : (
-                <p className="mt-1.5 text-xs text-slate-500">
-                  음원·영상은 교실 화면 안내에 따라 함께 감상합니다.
+                <p className="mt-1.5 text-xs leading-relaxed text-amber-800">
+                  [확인 필요] 교사 확인 화면에서 유튜브 감상곡 주소를 등록하면 이곳에 영상 미리보기와 링크가 연결됩니다.
                 </p>
               )}
             </div>
@@ -269,16 +309,29 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
             </div>
 
             {myResponse && !isEditing && (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditing(true);
-                  setStatusNotice('');
-                }}
-                className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
-              >
-                내 글 수정하기
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditing(true);
+                    setStatusNotice('');
+                  }}
+                  className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
+                >
+                  내 글 수정하기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusNotice('');
+                    setErrorMsg('');
+                    onStartNewStudent();
+                  }}
+                  className="min-h-[44px] rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
+                >
+                  다른 학생 작성하기
+                </button>
+              </div>
             )}
           </div>
 
@@ -331,11 +384,16 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
             {myResponse && !isEditing ? (
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                  <div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {myResponse.studentId && (
+                      <span className="font-mono tabular-nums font-medium text-slate-700">
+                        {myResponse.studentId}
+                      </span>
+                    )}
                     <span className="font-medium text-slate-900">{myResponse.studentName}</span>
                     {myResponse.classGroup && (
                       <>
-                        <span className="mx-1.5" aria-hidden="true">·</span>
+                        <span aria-hidden="true">·</span>
                         <span>{myResponse.classGroup}</span>
                       </>
                     )}
@@ -395,18 +453,33 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
               </div>
             ) : (
               <form ref={formRef} onSubmit={handleSubmit} className="space-y-5">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <label htmlFor="studentId" className="block text-sm font-medium text-slate-800">
+                      학번 <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      id="studentId"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={20}
+                      value={studentId}
+                      onChange={(e) => setStudentId(e.target.value)}
+                      placeholder="예: 20305"
+                      className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-base text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
+                    />
+                  </div>
                   <div>
                     <label htmlFor="studentName" className="block text-sm font-medium text-slate-800">
-                      학번 · 이름 <span className="text-red-600">*</span>
+                      이름 <span className="text-red-600">*</span>
                     </label>
                     <input
                       id="studentName"
                       type="text"
-                      maxLength={40}
+                      maxLength={30}
                       value={studentName}
                       onChange={(e) => setStudentName(e.target.value)}
-                      placeholder="예: 20305 김민준"
+                      placeholder="예: 김민준"
                       className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
                     />
                   </div>
@@ -475,6 +548,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        setStudentId(myResponse.studentId);
                         setStudentName(myResponse.studentName);
                         setClassGroup(myResponse.classGroup);
                         setReflectionText(myResponse.reflectionText);
