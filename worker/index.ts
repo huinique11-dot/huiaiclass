@@ -84,6 +84,7 @@ interface EraInput {
   artworkNote: string;
   artworks: ArtworkInput[];
   songs: EraSongInput[];
+  links: EraSongInput[];
 }
 
 interface EraRow {
@@ -94,6 +95,7 @@ interface EraRow {
   artwork_note: string;
   artworks_json: string;
   songs_json: string;
+  links_json?: string;
 }
 
 const DEFAULT_LESSON = {
@@ -179,6 +181,12 @@ async function ensureSchema(db: D1Database): Promise<void> {
       "CREATE TABLE IF NOT EXISTS lesson_eras (id TEXT PRIMARY KEY, sort_index INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL, historical_context TEXT NOT NULL DEFAULT '', artwork_note TEXT NOT NULL DEFAULT '', artworks_json TEXT NOT NULL DEFAULT '[]', songs_json TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL)",
     )
     .run();
+  try {
+    await db.prepare("ALTER TABLE lesson_eras ADD COLUMN links_json TEXT NOT NULL DEFAULT '[]'").run();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (!msg.includes('duplicate column')) throw err;
+  }
   for (const col of ['era_title', 'song_title']) {
     try {
       await db.prepare(`ALTER TABLE student_responses ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`).run();
@@ -207,12 +215,13 @@ function mapEraRow(row: EraRow): EraInput {
     artworkNote: row.artwork_note,
     artworks: parseJsonArray(row.artworks_json) as ArtworkInput[],
     songs: parseJsonArray(row.songs_json) as EraSongInput[],
+    links: parseJsonArray(row.links_json ?? '[]') as EraSongInput[],
   };
 }
 
 async function readEras(db: D1Database): Promise<EraInput[]> {
   const res = await db
-    .prepare('SELECT id, sort_index, title, historical_context, artwork_note, artworks_json, songs_json FROM lesson_eras ORDER BY sort_index ASC')
+    .prepare('SELECT id, sort_index, title, historical_context, artwork_note, artworks_json, songs_json, links_json FROM lesson_eras ORDER BY sort_index ASC')
     .all<EraRow>();
   const eras = (res.results ?? []).map(mapEraRow);
   if (eras.length > 0) return eras;
@@ -230,6 +239,7 @@ async function readEras(db: D1Database): Promise<EraInput[]> {
     artworkNote: legacy.artwork_note.includes('[확인 필요]') ? '' : legacy.artwork_note,
     artworks,
     songs: legacy.song_title ? [{ id: crypto.randomUUID(), title: legacy.song_title, url: legacy.audio_or_link_url }] : [],
+    links: [],
   };
   await writeEras(db, [era]);
   return [era];
@@ -242,9 +252,9 @@ async function writeEras(db: D1Database, eras: EraInput[]): Promise<void> {
     const e = eras[i];
     await db
       .prepare(
-        'INSERT INTO lesson_eras (id, sort_index, title, historical_context, artwork_note, artworks_json, songs_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO lesson_eras (id, sort_index, title, historical_context, artwork_note, artworks_json, songs_json, links_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .bind(e.id, i, e.title, e.historicalContext, e.artworkNote, JSON.stringify(e.artworks), JSON.stringify(e.songs), now)
+      .bind(e.id, i, e.title, e.historicalContext, e.artworkNote, JSON.stringify(e.artworks), JSON.stringify(e.songs), JSON.stringify(e.links), now)
       .run();
   }
 }
@@ -280,7 +290,17 @@ function sanitizeEras(raw: unknown): EraInput[] | string {
       const description = cleanText(ar.description, 1200);
       if (aTitle || imageCheck.value || description) artworks.push({ slotIndex, title: aTitle, imageUrl: imageCheck.value, description });
     }
+    const links: EraSongInput[] = [];
+    for (const lv of (Array.isArray(r.links) ? r.links : []).slice(0, 10)) {
+      if (!lv || typeof lv !== 'object' || Array.isArray(lv)) continue;
+      const lr = lv as Record<string, unknown>;
+      const lu = sanitizeHttpUrl(lr.url);
+      if (!lu.valid) return `「${title}」 둘러보기 링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.`;
+      if (!lu.value) continue;
+      links.push({ id: cleanText(lr.id, 64) || crypto.randomUUID(), title: cleanText(lr.title, 80) || '작품 더 둘러보기', url: lu.value });
+    }
     eras.push({
+      links,
       id: cleanText(r.id, 64) || crypto.randomUUID(),
       title,
       historicalContext: cleanText(r.historicalContext, 3000),

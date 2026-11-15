@@ -140,6 +140,20 @@ export const ListeningMaterials: React.FC<ListeningMaterialsProps> = ({ eras, er
             ) : (
               <p className="mt-1.5 text-sm text-amber-800">[확인 필요] 이 시대의 미술·시각 자료를 등록해 주세요.</p>
             )}
+            {(era.links ?? []).length > 0 && (
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-medium text-slate-600">더 많은 작품으로 미술 경향 살펴보기</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(era.links ?? []).map((l) => (
+                    <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:bg-slate-100">
+                      <ExternalLink className="h-4 w-4" aria-hidden="true" /> {l.title}
+                    </a>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-slate-500">새 탭에서 열려요. 다 본 뒤 이 탭으로 돌아오세요.</p>
+              </div>
+            )}
           </div>
         </div>
       )}

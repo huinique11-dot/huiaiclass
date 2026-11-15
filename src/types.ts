@@ -21,6 +21,13 @@ export interface Era {
   artworkNote: string;
   artworks: ArtworkItem[];
   songs: EraSong[];
+  links?: EraLink[]; // 더 많은 작품 둘러보기(새 탭으로 열림)
+}
+
+export interface EraLink {
+  id: string;
+  title: string;
+  url: string;
 }
 
 export interface StudentProfile {

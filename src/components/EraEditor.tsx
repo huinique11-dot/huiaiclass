@@ -238,6 +238,30 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
             </button>
           )}
 
+          {/* 더 둘러보기 링크 (미술관 컬렉션 등, 새 탭으로 열림) */}
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold text-slate-800">더 많은 작품 둘러보기 링크 <span className="font-normal text-slate-500">(미술관 컬렉션 검색 결과 등 · 학생 화면에서 새 탭으로 열림)</span></p>
+            <div className="mt-2 space-y-2">
+              {(era.links ?? []).map((l) => (
+                <div key={l.id} className="grid gap-2 sm:grid-cols-[14rem_1fr_auto]">
+                  <input className={inputCls} maxLength={80} value={l.title} placeholder="버튼 이름 (예: NGA 바로크 작품)" aria-label="둘러보기 링크 이름"
+                    onChange={(e) => patchEra({ links: (era.links ?? []).map((x) => (x.id === l.id ? { ...x, title: e.target.value } : x)) })} />
+                  <input className={inputCls} type="url" maxLength={500} value={l.url} placeholder="https://www.nga.gov/artworks ..." aria-label="둘러보기 링크 주소"
+                    onChange={(e) => patchEra({ links: (era.links ?? []).map((x) => (x.id === l.id ? { ...x, url: e.target.value } : x)) })} />
+                  <button type="button" aria-label="둘러보기 링크 지우기"
+                    onClick={() => patchEra({ links: (era.links ?? []).filter((x) => x.id !== l.id) })}
+                    className="min-h-[40px] rounded-lg border border-slate-300 px-3 text-slate-500 hover:bg-red-50 hover:text-red-700">
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={() => patchEra({ links: [...(era.links ?? []), { id: newId(), title: '', url: '' }] })}
+              className="mt-2 inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+              <Plus className="h-4 w-4" aria-hidden="true" /> 링크 추가
+            </button>
+          </div>
+
           <label className="block">
             <span className={labelCls}>미술 · 시각 자료 안내 문구 (선택)</span>
             <textarea className={`${inputCls} min-h-[56px]`} maxLength={600} value={era.artworkNote}

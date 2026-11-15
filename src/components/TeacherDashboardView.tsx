@@ -234,6 +234,9 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
           .map((x) => ({ ...x, title: x.title.trim(), imageUrl: x.imageUrl.trim(), description: x.description.trim() }))
           .filter((x) => x.title || x.imageUrl || x.description)
           .map((x, i) => ({ ...x, slotIndex: i })),
+        links: (e.links ?? [])
+          .map((l) => ({ ...l, title: l.title.trim(), url: l.url.trim() }))
+          .filter((l) => l.url),
         songs: e.songs
           .map((s) => ({ ...s, title: s.title.trim(), url: s.url.trim() }))
           .filter((s) => s.title || s.url),
