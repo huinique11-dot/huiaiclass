@@ -11,9 +11,11 @@ import { StudentActivityView } from './components/StudentActivityView.tsx';
 import { ClassGalleryView } from './components/ClassGalleryView.tsx';
 import { TeacherDashboardView } from './components/TeacherDashboardView.tsx';
 import { ChristmasLights, ChristmasSky } from './components/ChristmasDecor.tsx';
+import { AiAnalysisView } from './components/AiAnalysisView.tsx';
+import { TeacherAiPanel } from './components/TeacherAiPanel.tsx';
 import type { LessonConfig, StudentResponse, TeacherSessionState } from './types.ts';
 
-type ActiveTab = 'activity' | 'gallery' | 'teacher';
+type ActiveTab = 'activity' | 'gallery' | 'ai' | 'teacher';
 
 const MY_CREDS_STORAGE_KEY = 'music_era_stage3_my_creds_v1';
 
@@ -235,6 +237,15 @@ export default function App() {
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab('ai')}
+              className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'ai' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
+              }`}
+            >
+              AI 또래 음악 분석
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('teacher')}
               className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 activeTab === 'teacher' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
@@ -258,7 +269,7 @@ export default function App() {
 
         {/* Mobile navigation row */}
         <nav
-          className="grid grid-cols-3 border-t border-xmas-gold/20 px-2 md:hidden"
+          className="grid grid-cols-4 border-t border-xmas-gold/20 px-1 md:hidden"
           aria-label="모바일 메뉴"
         >
           <button
@@ -278,6 +289,15 @@ export default function App() {
             }`}
           >
             서로의 관점
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('ai')}
+            className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
+              activeTab === 'ai' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
+            }`}
+          >
+            AI 분석
           </button>
           <button
             type="button"
@@ -331,7 +351,10 @@ export default function App() {
             onRefresh={handleRefreshGallery}
             onGoToWrite={scrollToWorksheet}
           />
+        ) : activeTab === 'ai' ? (
+          <AiAnalysisView />
         ) : (
+          <>
           <TeacherDashboardView
             lesson={lesson}
             storageMode={storageMode}
@@ -345,6 +368,8 @@ export default function App() {
             onRefreshResponses={handleRefreshTeacherResponses}
             onCheckConnection={fetchAll}
           />
+          {storageMode === 'api-connected' && teacherSession.authenticated && <TeacherAiPanel />}
+          </>
         )}
       </main>
 
@@ -352,7 +377,7 @@ export default function App() {
       <footer className="xmas-pine relative z-10 border-t-2 border-xmas-gold/50">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-5 text-xs text-teal-100 sm:gap-4 sm:px-6">
           <span>
-            [읽걷쓰AI 프로젝트 수업] 무엇을 욕망했는가- 음악으로 시대 읽고 공감하기 · 3단계(5~6차시)
+            [읽걷쓰AI 프로젝트 수업] 무엇을 욕망했는가- 음악으로 시대 읽고 공감하기 · 3단계(5~6차시) · 4단계(7~8차시)
           </span>
           <span>
             {storageMode === 'api-connected'

@@ -1,3 +1,5 @@
+import { handleAiRoutes, type WorkersAI } from './aiActivity.ts';
+
 interface D1Result<T = Record<string, unknown>> {
   results?: T[];
   success: boolean;
@@ -23,6 +25,8 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   TEACHER_PASSWORD?: string;
+  AI?: WorkersAI;
+  AI_MODEL?: string;
 }
 
 interface LessonRow {
@@ -331,6 +335,16 @@ export default {
     const isHttps = url.protocol === 'https:';
 
     try {
+      // 4단계 또래 음악 H-A-H 활동 (/api/ai/*)
+      const aiResponse = await handleAiRoutes(request, env, url, {
+        jsonResponse,
+        cleanText,
+        parseJsonBody,
+        isTeacherAuthenticated: (req) => isTeacherAuthenticated(req, env),
+        timingSafeEqualStrings,
+      });
+      if (aiResponse) return aiResponse;
+
       // Health check verifies D1 connection and required tables exist
       if (pathname === '/api/health' && request.method === 'GET') {
         await env.DB.prepare('SELECT 1 AS ok').first();
