@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Cloudflare Builds는 npm을 사용 (bun.lock이 있으면 bun install --frozen-lockfile 단계에서 실패)
+bun.lock
+.wrangler/
