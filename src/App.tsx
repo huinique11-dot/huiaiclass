@@ -1,26 +1,52 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { loadClassroomState, type StorageMode } from './lib/classroomApi.ts';
+import {
+  DEFAULT_LESSON,
+  fetchPublicResponses,
+  fetchTeacherResponses,
+  loadInitialState,
+  type StorageMode,
+} from './lib/classroomApi.ts';
 import { StudentActivityView } from './components/StudentActivityView.tsx';
 import { ClassGalleryView } from './components/ClassGalleryView.tsx';
 import { TeacherDashboardView } from './components/TeacherDashboardView.tsx';
-import type { LessonConfig, StudentResponse } from './types.ts';
+import type { LessonConfig, StudentResponse, TeacherSessionState } from './types.ts';
 
 type ActiveTab = 'activity' | 'gallery' | 'teacher';
 
-const MY_RESPONSE_STORAGE_KEY = 'music_era_stage3_my_response_id';
+const MY_CREDS_STORAGE_KEY = 'music_era_stage3_my_creds_v1';
+
+interface MyCredentials {
+  id: string;
+  token: string;
+}
+
+function readStoredCreds(): MyCredentials | null {
+  try {
+    const raw = window.localStorage.getItem(MY_CREDS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<MyCredentials>;
+    if (typeof parsed.id === 'string' && typeof parsed.token === 'string' && parsed.id && parsed.token) {
+      return { id: parsed.id, token: parsed.token };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('activity');
   const [storageMode, setStorageMode] = useState<StorageMode>('pending-setup');
-  const [lesson, setLesson] = useState<LessonConfig | null>(null);
-  const [responses, setResponses] = useState<StudentResponse[]>([]);
-  const [myResponseId, setMyResponseId] = useState<string | null>(() => {
-    try {
-      return window.localStorage.getItem(MY_RESPONSE_STORAGE_KEY);
-    } catch {
-      return null;
-    }
+  const [statusMessage, setStatusMessage] = useState('');
+  const [lesson, setLesson] = useState<LessonConfig>(DEFAULT_LESSON);
+  const [publicResponses, setPublicResponses] = useState<StudentResponse[]>([]);
+  const [teacherResponses, setTeacherResponses] = useState<StudentResponse[]>([]);
+  const [myCreds, setMyCreds] = useState<MyCredentials | null>(() => readStoredCreds());
+  const [myResponse, setMyResponse] = useState<StudentResponse | null>(null);
+  const [teacherSession, setTeacherSession] = useState<TeacherSessionState>({
+    authenticated: false,
+    passwordConfigured: false,
   });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -30,10 +56,20 @@ export default function App() {
   const fetchAll = useCallback(async () => {
     setLoadError('');
     try {
-      const state = await loadClassroomState();
+      const state = await loadInitialState(readStoredCreds());
       setStorageMode(state.storageMode);
+      setStatusMessage(state.statusMessage);
       setLesson(state.lesson);
-      setResponses(state.responses);
+      setPublicResponses(state.publicResponses);
+      setMyResponse(state.myResponse);
+      setTeacherSession(state.teacherSession);
+
+      if (state.storageMode === 'api-connected' && state.teacherSession.authenticated) {
+        const all = await fetchTeacherResponses();
+        setTeacherResponses(all);
+      } else {
+        setTeacherResponses([]);
+      }
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '화면을 불러오는 중 오류가 발생했습니다.');
     } finally {
@@ -45,57 +81,87 @@ export default function App() {
     fetchAll();
   }, [fetchAll]);
 
-  const myResponse = useMemo(() => {
-    if (!myResponseId) return null;
-    return responses.find((r) => r.id === myResponseId) ?? null;
-  }, [responses, myResponseId]);
+  const handleSavedResponse = async (saved: StudentResponse, editToken?: string) => {
+    setStorageMode('api-connected');
+    setStatusMessage('');
+    setMyResponse(saved);
 
-  const handleSavedResponse = (saved: StudentResponse, nextMode: StorageMode) => {
-    setStorageMode(nextMode);
-    setResponses((prev) => {
-      const exists = prev.some((r) => r.id === saved.id);
-      if (exists) {
-        return prev.map((r) => (r.id === saved.id ? saved : r));
-      }
-      return [saved, ...prev];
-    });
-    setMyResponseId(saved.id);
-    try {
-      window.localStorage.setItem(MY_RESPONSE_STORAGE_KEY, saved.id);
-    } catch {
-      // Ignore storage errors
-    }
-  };
-
-  const handleLessonUpdated = (nextLesson: LessonConfig, nextMode: StorageMode) => {
-    setStorageMode(nextMode);
-    setLesson(nextLesson);
-  };
-
-  const handleResponseUpdated = (updated: StudentResponse, nextMode: StorageMode) => {
-    setStorageMode(nextMode);
-    setResponses((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-  };
-
-  const handleResponseDeleted = (id: string, nextMode: StorageMode) => {
-    setStorageMode(nextMode);
-    setResponses((prev) => prev.filter((r) => r.id !== id));
-    if (myResponseId === id) {
-      setMyResponseId(null);
+    if (editToken) {
+      const nextCreds = { id: saved.id, token: editToken };
+      setMyCreds(nextCreds);
       try {
-        window.localStorage.removeItem(MY_RESPONSE_STORAGE_KEY);
+        window.localStorage.setItem(MY_CREDS_STORAGE_KEY, JSON.stringify(nextCreds));
       } catch {
         // Ignore storage errors
+      }
+    }
+
+    const pub = await fetchPublicResponses();
+    if (pub.storageMode === 'api-connected') {
+      setPublicResponses(pub.responses);
+    }
+
+    if (teacherSession.authenticated) {
+      try {
+        const all = await fetchTeacherResponses();
+        setTeacherResponses(all);
+      } catch {
+        // Ignore background teacher refresh failure
       }
     }
   };
 
   const handleStartNewStudent = () => {
-    setMyResponseId(null);
+    setMyResponse(null);
+    setMyCreds(null);
     try {
-      window.localStorage.removeItem(MY_RESPONSE_STORAGE_KEY);
+      window.localStorage.removeItem(MY_CREDS_STORAGE_KEY);
     } catch {
       // Ignore storage errors
+    }
+  };
+
+  const handleRefreshGallery = async () => {
+    const pub = await fetchPublicResponses();
+    setStorageMode(pub.storageMode);
+    setPublicResponses(pub.responses);
+  };
+
+  const handleTeacherAuthChange = async (authenticated: boolean) => {
+    setTeacherSession((prev) => ({ ...prev, authenticated }));
+    if (authenticated) {
+      const all = await fetchTeacherResponses();
+      setTeacherResponses(all);
+    } else {
+      setTeacherResponses([]);
+    }
+  };
+
+  const handleRefreshTeacherResponses = async () => {
+    const all = await fetchTeacherResponses();
+    setTeacherResponses(all);
+  };
+
+  const handleLessonUpdated = async (nextLesson: LessonConfig) => {
+    setLesson(nextLesson);
+    const pub = await fetchPublicResponses();
+    setPublicResponses(pub.responses);
+  };
+
+  const handleResponseUpdated = async (updated: StudentResponse) => {
+    setTeacherResponses((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    if (myResponse?.id === updated.id) {
+      setMyResponse(updated);
+    }
+    const pub = await fetchPublicResponses();
+    setPublicResponses(pub.responses);
+  };
+
+  const handleResponseDeleted = async (id: string) => {
+    setTeacherResponses((prev) => prev.filter((r) => r.id !== id));
+    setPublicResponses((prev) => prev.filter((r) => r.id !== id));
+    if (myResponse?.id === id) {
+      handleStartNewStudent();
     }
   };
 
@@ -187,7 +253,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Mobile navigation row with generous 44px touch targets */}
+        {/* Mobile navigation row */}
         <nav
           className="grid grid-cols-3 border-t border-slate-100 px-2 md:hidden"
           aria-label="모바일 메뉴"
@@ -228,12 +294,10 @@ export default function App() {
           <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-500">
             수업 활동 화면을 불러오는 중입니다...
           </div>
-        ) : loadError || !lesson ? (
+        ) : loadError ? (
           <div className="rounded-xl border border-red-200 bg-white p-8 text-center">
             <AlertCircle className="mx-auto h-6 w-6 text-red-600" aria-hidden="true" />
-            <p className="mt-2 text-sm font-medium text-slate-900">
-              {loadError || '수업 정보를 불러오지 못했습니다.'}
-            </p>
+            <p className="mt-2 text-sm font-medium text-slate-900">{loadError}</p>
             <button
               type="button"
               onClick={fetchAll}
@@ -246,7 +310,9 @@ export default function App() {
           <StudentActivityView
             lesson={lesson}
             storageMode={storageMode}
+            statusMessage={statusMessage}
             myResponse={myResponse}
+            myEditToken={myCreds?.token ?? null}
             onSaved={handleSavedResponse}
             onStartNewStudent={handleStartNewStudent}
             onGoToGallery={() => setActiveTab('gallery')}
@@ -256,20 +322,24 @@ export default function App() {
           <ClassGalleryView
             lesson={lesson}
             storageMode={storageMode}
-            responses={responses}
-            myResponseId={myResponseId}
-            onRefresh={fetchAll}
+            responses={publicResponses}
+            myResponseId={myResponse?.id ?? null}
+            onRefresh={handleRefreshGallery}
             onGoToWrite={scrollToWorksheet}
           />
         ) : (
           <TeacherDashboardView
             lesson={lesson}
             storageMode={storageMode}
-            responses={responses}
+            statusMessage={statusMessage}
+            teacherSession={teacherSession}
+            responses={teacherResponses}
+            onAuthenticatedChange={handleTeacherAuthChange}
             onLessonUpdated={handleLessonUpdated}
             onResponseUpdated={handleResponseUpdated}
             onResponseDeleted={handleResponseDeleted}
-            onRefresh={fetchAll}
+            onRefreshResponses={handleRefreshTeacherResponses}
+            onCheckConnection={fetchAll}
           />
         )}
       </main>
@@ -282,7 +352,7 @@ export default function App() {
           </span>
           <span>
             {storageMode === 'api-connected'
-              ? '중학교 2학년 음악 · /api 저장소 연결됨'
+              ? '중학교 2학년 음악 · Cloudflare D1 연결됨'
               : '중학교 2학년 음악 · 저장 준비 중'}
           </span>
         </div>

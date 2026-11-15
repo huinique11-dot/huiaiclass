@@ -19,8 +19,14 @@ export interface StudentResponse {
   classGroup: string;
   reflectionText: string;
   presentConnection: string;
+  isPublic: boolean;
   rubricLevel: RubricLevel;
   teacherFeedback: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TeacherSessionState {
+  authenticated: boolean;
+  passwordConfigured: boolean;
 }

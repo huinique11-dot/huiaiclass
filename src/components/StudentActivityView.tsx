@@ -6,6 +6,7 @@ import {
   Clock,
   ExternalLink,
   Headphones,
+  Lock,
   PencilLine,
 } from 'lucide-react';
 import { submitStudentResponse, type StorageMode } from '../lib/classroomApi.ts';
@@ -15,8 +16,10 @@ import type { LessonConfig, StudentResponse } from '../types.ts';
 interface StudentActivityViewProps {
   lesson: LessonConfig;
   storageMode: StorageMode;
+  statusMessage: string;
   myResponse: StudentResponse | null;
-  onSaved: (saved: StudentResponse, nextMode: StorageMode) => void;
+  myEditToken: string | null;
+  onSaved: (saved: StudentResponse, editToken?: string) => void;
   onStartNewStudent: () => void;
   onGoToGallery: () => void;
   formRef: React.RefObject<HTMLFormElement | null>;
@@ -38,7 +41,9 @@ function formatDateTime(iso: string): string {
 export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
   lesson,
   storageMode,
+  statusMessage,
   myResponse,
+  myEditToken,
   onSaved,
   onStartNewStudent,
   onGoToGallery,
@@ -49,6 +54,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
   const [classGroup, setClassGroup] = useState(myResponse?.classGroup ?? '');
   const [reflectionText, setReflectionText] = useState(myResponse?.reflectionText ?? '');
   const [presentConnection, setPresentConnection] = useState(myResponse?.presentConnection ?? '');
+  const [isPublic, setIsPublic] = useState(myResponse?.isPublic ?? false);
 
   const [isEditing, setIsEditing] = useState(!myResponse);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -62,6 +68,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
       setClassGroup(myResponse.classGroup);
       setReflectionText(myResponse.reflectionText);
       setPresentConnection(myResponse.presentConnection);
+      setIsPublic(myResponse.isPublic);
       setIsEditing(false);
     } else {
       setStudentId('');
@@ -69,6 +76,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
       setClassGroup('');
       setReflectionText('');
       setPresentConnection('');
+      setIsPublic(false);
       setIsEditing(true);
     }
   }, [myResponse?.id]);
@@ -87,7 +95,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
       return;
     }
     if (!trimmedName) {
-      setErrorMsg('이름을 입력해 주세요.');
+      setErrorMsg('이름(별칭)을 입력해 주세요.');
       return;
     }
     if (!trimmedReflection) {
@@ -99,26 +107,26 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
     try {
       const result = await submitStudentResponse({
         id: myResponse?.id,
+        editToken: myEditToken ?? undefined,
         studentId: trimmedId,
         studentName: trimmedName,
         classGroup: classGroup.trim(),
         reflectionText: trimmedReflection,
         presentConnection: presentConnection.trim(),
+        isPublic,
       });
 
-      onSaved(result.response, result.storageMode);
+      onSaved(result.response, result.editToken);
       setIsEditing(false);
-      if (result.storageMode === 'api-connected') {
-        setStatusNotice(
-          myResponse ? '수정한 감성 문장이 저장되었습니다.' : '감성 문장이 정상적으로 저장되었습니다.',
-        );
-      } else {
-        setStatusNotice(
-          '입력 내용이 현재 화면에 임시 반영되었습니다. (저장 준비 중 — 아직 서버·DB에 영구 저장되지 않음)',
-        );
-      }
+      setStatusNotice(
+        myResponse ? '수정한 감성 문장이 저장되었습니다.' : '감성 문장이 정상적으로 저장되었습니다.',
+      );
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '입력 처리 중 오류가 발생했습니다.');
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : '저장에 실패했습니다. 데이터 저장소 연결 상태를 확인해 주세요.',
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -188,7 +196,8 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
           <div className="space-y-0.5">
             <p className="font-medium">저장 준비 중 (데이터 저장소 연결 전)</p>
             <p className="text-xs leading-relaxed text-amber-900">
-              현재는 화면 구성과 입력 동작을 확인하는 단계입니다. 3차시에 Cloudflare D1(/api)을 연결하기 전까지는 입력한 내용이 이 브라우저 화면에만 임시 반영되며 서버에 영구 저장되지 않습니다.
+              {statusMessage ||
+                '현재는 화면과 입력 형태를 확인하는 상태입니다. Cloudflare Worker와 D1 데이터베이스(/api)가 연결되기 전까지는 제출해도 저장되지 않습니다.'}
             </p>
           </div>
         </div>
@@ -304,7 +313,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                 <h2 className="text-lg font-semibold">감성 표현 활동지</h2>
               </div>
               <p className="mt-1 text-xs text-slate-500">
-                작성한 문장은 교사 확인 화면과 서로의 관점 보드에서 확인할 수 있습니다.
+                개인정보 보호를 위해 실명 대신 가상 별칭으로 입력해 주세요. 비공개 글은 교사만 확인할 수 있습니다.
               </p>
             </div>
 
@@ -329,7 +338,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                   }}
                   className="min-h-[44px] rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
                 >
-                  다른 학생 작성하기
+                  다른 별칭으로 새로 쓰기
                 </button>
               </div>
             )}
@@ -345,21 +354,13 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
             {statusNotice && (
               <div
                 role="status"
-                className={`mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm ${
-                  storageMode === 'api-connected'
-                    ? 'border-teal-200 bg-teal-50 text-teal-900'
-                    : 'border-amber-200 bg-amber-50 text-amber-950'
-                }`}
+                className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900"
               >
                 <div className="flex items-start gap-2">
-                  {storageMode === 'api-connected' ? (
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
-                  ) : (
-                    <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
-                  )}
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
                   <span>{statusNotice}</span>
                 </div>
-                {lesson.shareWithClass && (
+                {lesson.shareWithClass && isPublic && (
                   <button
                     type="button"
                     onClick={onGoToGallery}
@@ -374,9 +375,9 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
             {errorMsg && (
               <div
                 role="alert"
-                className="mb-5 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+                className="mb-5 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
               >
-                <AlertCircle className="h-4 w-4 shrink-0 text-red-700" aria-hidden="true" />
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700" aria-hidden="true" />
                 <span>{errorMsg}</span>
               </div>
             )}
@@ -397,9 +398,11 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                         <span>{myResponse.classGroup}</span>
                       </>
                     )}
+                    <span aria-hidden="true">·</span>
+                    <span>{myResponse.isPublic ? '학급 공개' : '비공개(교사만 확인)'}</span>
                   </div>
                   <span className="font-mono tabular-nums">
-                    입력 시각: {formatDateTime(myResponse.updatedAt)}
+                    저장 시각: {formatDateTime(myResponse.updatedAt)}
                   </span>
                 </div>
 
@@ -429,18 +432,11 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                 )}
 
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
-                  {storageMode === 'api-connected' ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-teal-700">
-                      <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                      <span>저장 완료</span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-800">
-                      <Clock className="h-4 w-4" aria-hidden="true" />
-                      <span>저장 준비 중 (현재 화면 임시 반영)</span>
-                    </span>
-                  )}
-                  {lesson.shareWithClass && (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-teal-700">
+                    <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                    <span>저장 완료</span>
+                  </span>
+                  {lesson.shareWithClass && myResponse.isPublic && (
                     <button
                       type="button"
                       onClick={onGoToGallery}
@@ -456,7 +452,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <div>
                     <label htmlFor="studentId" className="block text-sm font-medium text-slate-800">
-                      학번 <span className="text-red-600">*</span>
+                      학번(번호) <span className="text-red-600">*</span>
                     </label>
                     <input
                       id="studentId"
@@ -471,7 +467,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                   </div>
                   <div>
                     <label htmlFor="studentName" className="block text-sm font-medium text-slate-800">
-                      이름 <span className="text-red-600">*</span>
+                      별칭(이름) <span className="text-red-600">*</span>
                     </label>
                     <input
                       id="studentName"
@@ -479,7 +475,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                       maxLength={30}
                       value={studentName}
                       onChange={(e) => setStudentName(e.target.value)}
-                      placeholder="예: 김민준"
+                      placeholder="예: 푸른음표 (가상 별칭)"
                       className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
                     />
                   </div>
@@ -493,7 +489,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                       maxLength={40}
                       value={classGroup}
                       onChange={(e) => setClassGroup(e.target.value)}
-                      placeholder="예: 2학년 3반 / 2모둠"
+                      placeholder="예: 2모둠"
                       className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
                     />
                   </div>
@@ -543,6 +539,24 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                   />
                 </div>
 
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                  <label className="flex min-h-[44px] cursor-pointer items-start gap-3 text-sm text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={isPublic}
+                      onChange={(e) => setIsPublic(e.target.checked)}
+                      className="mt-1 h-5 w-5 shrink-0 rounded border-slate-300 text-slate-900"
+                    />
+                    <span className="space-y-0.5">
+                      <span className="block font-medium">서로의 관점(학급 공유)에 내 글 공개하기</span>
+                      <span className="flex items-center gap-1 text-xs text-slate-500">
+                        <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span>선택하지 않으면 비공개로 저장되어 선생님만 볼 수 있습니다.</span>
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
                 <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-end">
                   {myResponse && (
                     <button
@@ -553,6 +567,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                         setClassGroup(myResponse.classGroup);
                         setReflectionText(myResponse.reflectionText);
                         setPresentConnection(myResponse.presentConnection);
+                        setIsPublic(myResponse.isPublic);
                         setErrorMsg('');
                         setIsEditing(false);
                       }}
@@ -567,14 +582,10 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                     className="min-h-[44px] w-full rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap sm:w-auto"
                   >
                     {isSubmitting
-                      ? '처리 중...'
-                      : storageMode === 'api-connected'
-                      ? myResponse
-                        ? '수정한 문장 저장하기'
-                        : '감성 문장 저장하기'
+                      ? '저장하는 중...'
                       : myResponse
-                      ? '수정한 문장 반영하기 (저장 준비 중)'
-                      : '감성 문장 입력 완료 (저장 준비 중)'}
+                      ? '수정한 문장 저장하기'
+                      : '감성 문장 저장하기'}
                   </button>
                 </div>
               </form>

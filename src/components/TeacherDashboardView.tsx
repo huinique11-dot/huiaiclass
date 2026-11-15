@@ -1,22 +1,43 @@
-import React, { useMemo, useState } from 'react';
-import { Check, CheckCircle2, Clock, Download, ExternalLink, LayoutGrid, RefreshCw, Search, Settings2, Table2, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Check,
+  CheckCircle2,
+  Clock,
+  Download,
+  ExternalLink,
+  LayoutGrid,
+  Lock,
+  LogOut,
+  RefreshCw,
+  Search,
+  Settings2,
+  Table2,
+  Trash2,
+} from 'lucide-react';
 import {
   deleteStudentResponse,
+  loginTeacher,
+  logoutTeacher,
   saveLessonConfig,
   updateTeacherReview,
   type StorageMode,
 } from '../lib/classroomApi.ts';
 import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
-import type { LessonConfig, RubricLevel, StudentResponse } from '../types.ts';
+import type { LessonConfig, RubricLevel, StudentResponse, TeacherSessionState } from '../types.ts';
 
 interface TeacherDashboardViewProps {
   lesson: LessonConfig;
   storageMode: StorageMode;
+  statusMessage: string;
+  teacherSession: TeacherSessionState;
   responses: StudentResponse[];
-  onLessonUpdated: (next: LessonConfig, nextMode: StorageMode) => void;
-  onResponseUpdated: (next: StudentResponse, nextMode: StorageMode) => void;
-  onResponseDeleted: (id: string, nextMode: StorageMode) => void;
-  onRefresh: () => void;
+  onAuthenticatedChange: (authenticated: boolean) => Promise<void>;
+  onLessonUpdated: (next: LessonConfig) => void;
+  onResponseUpdated: (next: StudentResponse) => void;
+  onResponseDeleted: (id: string) => void;
+  onRefreshResponses: () => Promise<void>;
+  onCheckConnection: () => Promise<void>;
 }
 
 const RUBRIC_DESCRIPTIONS: Record<'상' | '중' | '하', string> = {
@@ -41,18 +62,32 @@ function formatDateTime(iso: string): string {
 export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   lesson,
   storageMode,
+  statusMessage,
+  teacherSession,
   responses,
+  onAuthenticatedChange,
   onLessonUpdated,
   onResponseUpdated,
   onResponseDeleted,
-  onRefresh,
+  onRefreshResponses,
+  onCheckConnection,
 }) => {
+  // Login form state
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  // Dashboard filters & UI state
   const [searchTerm, setSearchTerm] = useState('');
   const [rubricFilter, setRubricFilter] = useState<'전체' | '미평가' | '상' | '중' | '하'>('전체');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [sortOrder, setSortOrder] = useState<'studentId' | 'latest'>('studentId');
   const [showLessonEditor, setShowLessonEditor] = useState(!lesson.isCustomized);
+  const [refreshing, setRefreshing] = useState(false);
+  const [actionError, setActionError] = useState('');
 
+  // Lesson editor state
   const [eraTitle, setEraTitle] = useState(lesson.eraTitle);
   const [songTitle, setSongTitle] = useState(lesson.songTitle);
   const [audioOrLinkUrl, setAudioOrLinkUrl] = useState(lesson.audioOrLinkUrl);
@@ -62,6 +97,17 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const [shareWithClass, setShareWithClass] = useState(lesson.shareWithClass);
   const [savingLesson, setSavingLesson] = useState(false);
   const [lessonSavedNotice, setLessonSavedNotice] = useState('');
+  const [lessonErrorNotice, setLessonErrorNotice] = useState('');
+
+  useEffect(() => {
+    setEraTitle(lesson.eraTitle);
+    setSongTitle(lesson.songTitle);
+    setAudioOrLinkUrl(lesson.audioOrLinkUrl);
+    setHistoricalContext(lesson.historicalContext);
+    setArtworkNote(lesson.artworkNote);
+    setEmpathyPrompt(lesson.empathyPrompt);
+    setShareWithClass(lesson.shareWithClass);
+  }, [lesson]);
 
   const previewYouTube = parseYouTubeUrl(audioOrLinkUrl);
   const previewValidUrl = isValidHttpUrl(audioOrLinkUrl);
@@ -74,8 +120,8 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const stats = useMemo(() => {
     const total = responses.length;
     const evaluated = responses.filter((r) => r.rubricLevel !== '').length;
-    const withPresent = responses.filter((r) => r.presentConnection.trim().length > 0).length;
-    return { total, evaluated, withPresent };
+    const publicCount = responses.filter((r) => r.isPublic).length;
+    return { total, evaluated, publicCount };
   }, [responses]);
 
   const filteredResponses = useMemo(() => {
@@ -110,12 +156,57 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     });
   }, [responses, searchTerm, rubricFilter, sortOrder]);
 
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    if (!passwordInput.trim()) {
+      setLoginError('교사 비밀번호를 입력해 주세요.');
+      return;
+    }
+    setLoggingIn(true);
+    try {
+      await loginTeacher(passwordInput);
+      setPasswordInput('');
+      await onAuthenticatedChange(true);
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : '로그인에 실패했습니다.');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setActionError('');
+    setLoggingOut(true);
+    try {
+      await logoutTeacher();
+      await onAuthenticatedChange(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '로그아웃 처리에 실패했습니다.');
+    } finally {
+      setLoggingOut(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setActionError('');
+    setRefreshing(true);
+    try {
+      await onRefreshResponses();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '응답 목록을 새로고침하지 못했습니다.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingLesson(true);
     setLessonSavedNotice('');
+    setLessonErrorNotice('');
     try {
-      const result = await saveLessonConfig({
+      const updated = await saveLessonConfig({
         eraTitle: eraTitle.trim() || lesson.eraTitle,
         songTitle: songTitle.trim() || lesson.songTitle,
         audioOrLinkUrl: audioOrLinkUrl.trim(),
@@ -124,12 +215,10 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         empathyPrompt: empathyPrompt.trim() || lesson.empathyPrompt,
         shareWithClass,
       });
-      onLessonUpdated(result.lesson, result.storageMode);
-      setLessonSavedNotice(
-        result.storageMode === 'api-connected'
-          ? '수업 자료가 서버에 저장되었습니다.'
-          : '수업 자료가 현재 화면에 임시 반영되었습니다. (저장 준비 중 — DB 미연결)',
-      );
+      onLessonUpdated(updated);
+      setLessonSavedNotice('수업 자료가 D1 데이터베이스에 저장되었습니다.');
+    } catch (err) {
+      setLessonErrorNotice(err instanceof Error ? err.message : '수업 자료를 저장하지 못했습니다.');
     } finally {
       setSavingLesson(false);
     }
@@ -138,33 +227,40 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const handleUpdateReview = async (item: StudentResponse, nextLevel: RubricLevel, nextFeedback: string) => {
     setSavingRowId(item.id);
     setSavedRowId(null);
+    setActionError('');
     try {
-      const result = await updateTeacherReview(item.id, nextLevel, nextFeedback.trim());
-      if (result.response) {
-        onResponseUpdated(result.response, result.storageMode);
-        setSavedRowId(item.id);
-      }
+      const updated = await updateTeacherReview(item.id, nextLevel, nextFeedback.trim());
+      onResponseUpdated(updated);
+      setSavedRowId(item.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '평가와 피드백을 저장하지 못했습니다.');
     } finally {
       setSavingRowId(null);
     }
   };
 
   const handleDelete = async (id: string) => {
-    const result = await deleteStudentResponse(id);
-    onResponseDeleted(id, result.storageMode);
-    setConfirmDeleteId(null);
+    setActionError('');
+    try {
+      await deleteStudentResponse(id);
+      onResponseDeleted(id);
+      setConfirmDeleteId(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '응답을 삭제하지 못했습니다.');
+    }
   };
 
   const handleExportCsv = () => {
     const headers = [
       '학번',
-      '이름',
+      '별칭(이름)',
       '반·모둠',
+      '공개 여부',
       '시대 상황 대입 감성 문장',
       '지금 시대에 대한 한 줄 생각',
       '평가 단계',
       '교사 피드백',
-      '입력 시각',
+      '저장 시각',
     ];
     const escapeCell = (val: string) => `"${val.replace(/"/g, '""')}"`;
     const rows = filteredResponses.map((r) =>
@@ -172,6 +268,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         r.studentId,
         r.studentName,
         r.classGroup,
+        r.isPublic ? '학급 공개' : '비공개',
         r.reflectionText,
         r.presentConnection,
         r.rubricLevel || '미평가',
@@ -193,6 +290,100 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  // Unauthenticated Teacher Login Gate
+  if (!teacherSession.authenticated) {
+    return (
+      <div className="mx-auto max-w-lg space-y-6 py-4">
+        <div className="border-b border-slate-200 pb-5">
+          <p className="text-xs text-slate-500">교사 전용 · 보호된 세션 인증</p>
+          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-slate-900">
+            교사 확인 로그인
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-slate-600">
+            학생이 작성한 비공개 응답과 평가·피드백, 수업 자료 설정은 교사 로그인 후 확인할 수 있습니다.
+          </p>
+        </div>
+
+        {storageMode === 'pending-setup' ? (
+          <div
+            role="status"
+            className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5 text-sm text-amber-950"
+          >
+            <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="font-medium">저장 준비 중 (Cloudflare Workers · D1 미연결)</p>
+              <p className="text-xs leading-relaxed text-amber-900">
+                {statusMessage ||
+                  '아직 /api 백엔드와 D1 데이터베이스가 연결되지 않았습니다. Cloudflare 발행 및 setup.sql 실행 후 교사 로그인과 응답 확인이 동작합니다.'}
+              </p>
+            </div>
+          </div>
+        ) : !teacherSession.passwordConfigured ? (
+          <div
+            role="status"
+            className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5 text-sm text-amber-950"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="font-medium">교사 비밀번호(TEACHER_PASSWORD) 설정 필요</p>
+              <p className="text-xs leading-relaxed text-amber-900">
+                Cloudflare Workers 환경 변수(Secret)에 TEACHER_PASSWORD를 등록한 뒤 다시 시도해 주세요.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        <section className="rounded-xl border border-slate-200 bg-white p-6">
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label htmlFor="teacherPassword" className="block text-sm font-medium text-slate-800">
+                교사 비밀번호
+              </label>
+              <input
+                id="teacherPassword"
+                type="password"
+                autoComplete="current-password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                placeholder="서버에 설정된 교사 비밀번호 입력"
+                className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
+              />
+            </div>
+
+            {loginError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs leading-relaxed text-red-800"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700" aria-hidden="true" />
+                <span>{loginError}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2.5 pt-2 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                onClick={onCheckConnection}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap"
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>/api 연결 상태 확인</span>
+              </button>
+              <button
+                type="submit"
+                disabled={loggingIn}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap"
+              >
+                <Lock className="h-4 w-4" aria-hidden="true" />
+                <span>{loggingIn ? '확인 중...' : '로그인'}</span>
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 sm:space-y-8">
       {/* Header & Actions */}
@@ -204,22 +395,23 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setShowLessonEditor((v) => !v)}
             className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap"
           >
             <Settings2 className="h-4 w-4" aria-hidden="true" />
-            <span>{showLessonEditor ? '수업 자료 설정 닫기' : '수업 자료 설정 ([확인 필요] 입력)'}</span>
+            <span>{showLessonEditor ? '수업 자료 설정 닫기' : '수업 자료 설정'}</span>
           </button>
           <button
             type="button"
-            onClick={onRefresh}
-            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap"
+            disabled={refreshing}
+            onClick={handleRefresh}
+            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 whitespace-nowrap"
           >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>/api 연결 확인</span>
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+            <span>{refreshing ? '불러오는 중...' : '응답 새로고침'}</span>
           </button>
           <button
             type="button"
@@ -230,40 +422,42 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
             <Download className="h-4 w-4" aria-hidden="true" />
             <span>CSV 내보내기</span>
           </button>
+          <button
+            type="button"
+            disabled={loggingOut}
+            onClick={handleLogout}
+            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 whitespace-nowrap"
+          >
+            <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{loggingOut ? '로그아웃 중...' : '로그아웃'}</span>
+          </button>
         </div>
       </div>
 
-      {/* Honest Storage Connection Banner */}
-      {storageMode === 'pending-setup' ? (
+      {/* Connection Status Banner */}
+      <div
+        role="status"
+        className="flex items-center gap-2.5 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900"
+      >
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
+        <span>교사 인증됨 · Cloudflare D1(/api) 저장소 연결됨</span>
+      </div>
+
+      {actionError && (
         <div
-          role="status"
-          className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5 text-sm text-amber-950"
+          role="alert"
+          className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
         >
-          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
-          <div className="space-y-1">
-            <p className="font-medium">저장소 상태: 저장 준비 중 (Cloudflare Workers · D1 미연결)</p>
-            <p className="text-xs leading-relaxed text-amber-900">
-              현재 화면은 같은 주소의 <code className="font-mono">/api</code> 경로로 데이터를 주고받도록 준비되어 있습니다. 아직 백엔드가 연결되지 않아 아래 목록에는 이 브라우저에서 직접 테스트 입력한 응답만 임시 표시됩니다.
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div
-          role="status"
-          className="flex items-center gap-2.5 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900"
-        >
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-700" aria-hidden="true" />
-          <span>저장소 상태: /api 저장소 연결됨 (Cloudflare Workers · D1)</span>
+          <AlertCircle className="h-4 w-4 shrink-0 text-red-700" aria-hidden="true" />
+          <span>{actionError}</span>
         </div>
       )}
 
       {/* KPI Summary Strip */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white px-5 py-4">
-          <p className="text-xs text-slate-500">
-            {storageMode === 'api-connected' ? '전체 제출 응답' : '임시 확인 응답 (현재 브라우저)'}
-          </p>
-          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-slate-900">{stats.total}명</p>
+          <p className="text-xs text-slate-500">전체 제출 응답</p>
+          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-slate-900">{stats.total}건</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-5 py-4">
           <p className="text-xs text-slate-500">평가 완료 (상·중·하)</p>
@@ -272,9 +466,9 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
           </p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-5 py-4">
-          <p className="text-xs text-slate-500">지금 시대 연결 작성</p>
+          <p className="text-xs text-slate-500">학급 공개 선택</p>
           <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-slate-900">
-            {stats.withPresent}건
+            {stats.publicCount}건
           </p>
         </div>
       </div>
@@ -337,7 +531,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
               {previewYouTube ? (
                 <div className="mt-3 space-y-2">
                   <p className="text-xs font-medium text-teal-800">
-                    유튜브 미리보기 확인됨 — 적용하면 학생 화면에서도 바로 재생할 수 있습니다.
+                    유튜브 미리보기 확인됨 — 저장하면 학생 화면에서도 바로 재생할 수 있습니다.
                   </p>
                   <div className="aspect-video w-full max-w-md overflow-hidden rounded-lg bg-slate-900">
                     <iframe
@@ -419,23 +613,22 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                   onChange={(e) => setShareWithClass(e.target.checked)}
                   className="h-5 w-5 rounded border-slate-300 text-slate-900"
                 />
-                <span>‘서로의 관점’ 화면에서 학생들에게 글 공개하기</span>
+                <span>‘서로의 관점’ 화면에서 공개 선택된 글만 학급과 나누기</span>
               </label>
 
               <div className="flex flex-wrap items-center gap-3">
                 {lessonSavedNotice && (
-                  <span className="text-xs font-medium text-amber-800">{lessonSavedNotice}</span>
+                  <span className="text-xs font-medium text-teal-700">{lessonSavedNotice}</span>
+                )}
+                {lessonErrorNotice && (
+                  <span className="text-xs font-medium text-red-700">{lessonErrorNotice}</span>
                 )}
                 <button
                   type="submit"
                   disabled={savingLesson}
                   className="min-h-[44px] w-full rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap sm:w-auto"
                 >
-                  {savingLesson
-                    ? '적용 중...'
-                    : storageMode === 'api-connected'
-                    ? '수업 자료 저장하기'
-                    : '수업 자료 적용하기 (저장 준비 중)'}
+                  {savingLesson ? '저장 중...' : '수업 자료 저장하기'}
                 </button>
               </div>
             </div>
@@ -443,7 +636,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         </section>
       )}
 
-      {/* Rubric Reference (from PDF page 5) */}
+      {/* Rubric Reference */}
       <section className="rounded-xl border border-slate-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-slate-900">
           설계안 평가 기준 ③ — 음악에 담긴 시대 상황 공감과 지금 시대 관점 서술
@@ -470,13 +663,12 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="학번, 이름, 반·모둠, 문장 내용 검색..."
+              placeholder="학번, 별칭, 반·모둠, 문장 내용 검색..."
               className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-sm"
             />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Sort order segmented control */}
             <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="정렬 기준">
               <button
                 type="button"
@@ -498,7 +690,6 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
               </button>
             </div>
 
-            {/* View mode segmented control */}
             <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="보기 방식">
               <button
                 type="button"
@@ -542,27 +733,28 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Responses List / Aggregated Table */}
+      {/* Responses List / Table */}
       {filteredResponses.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center sm:p-12">
-          <p className="text-base font-medium text-slate-900">조건에 맞는 학생 응답이 없습니다</p>
+          <p className="text-base font-medium text-slate-900">저장된 학생 응답이 없습니다</p>
           <p className="mt-1.5 text-sm text-slate-500">
-            학생 화면에서 학번·이름과 감성 문장을 입력하면 이곳에 데이터가 모여집니다.
+            학생이 활동지에서 학번·별칭과 감성 문장을 저장하면 이곳에 모아집니다.
           </p>
         </div>
       ) : viewMode === 'table' ? (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[820px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
                   <th className="px-4 py-3 whitespace-nowrap">학번</th>
-                  <th className="px-4 py-3 whitespace-nowrap">이름</th>
+                  <th className="px-4 py-3 whitespace-nowrap">별칭(이름)</th>
                   <th className="px-4 py-3 whitespace-nowrap">반·모둠</th>
+                  <th className="px-4 py-3 whitespace-nowrap">공개</th>
                   <th className="px-4 py-3">시대 상황 대입 감성 문장</th>
                   <th className="px-4 py-3">지금 시대 한 줄</th>
                   <th className="px-4 py-3 whitespace-nowrap">평가</th>
-                  <th className="px-4 py-3 whitespace-nowrap">입력 시각</th>
+                  <th className="px-4 py-3 whitespace-nowrap">저장 시각</th>
                   <th className="px-4 py-3 text-right whitespace-nowrap">관리</th>
                 </tr>
               </thead>
@@ -577,6 +769,9 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                     </td>
                     <td className="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
                       {item.classGroup || '-'}
+                    </td>
+                    <td className="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
+                      {item.isPublic ? '공개' : '비공개'}
                     </td>
                     <td className="max-w-sm px-4 py-3.5 text-xs leading-relaxed text-slate-800 whitespace-pre-line">
                       {item.reflectionText}
@@ -640,6 +835,8 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                       </>
                     )}
                     <span className="text-slate-300" aria-hidden="true">·</span>
+                    <span className="text-xs text-slate-500">{item.isPublic ? '학급 공개' : '비공개'}</span>
+                    <span className="text-slate-300" aria-hidden="true">·</span>
                     <span className="font-mono text-xs tabular-nums text-slate-500">
                       {formatDateTime(item.updatedAt)}
                     </span>
@@ -678,7 +875,6 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
-                  {/* Student text */}
                   <div className="space-y-4 lg:col-span-7">
                     <div>
                       <p className="text-xs font-medium text-slate-500">시대 상황 대입 감성 문장</p>
@@ -694,7 +890,6 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                     )}
                   </div>
 
-                  {/* Teacher assessment & feedback */}
                   <div className="space-y-3 border-t border-slate-200 pt-4 lg:col-span-5 lg:border-t-0 lg:pt-0">
                     <div>
                       <p className="text-xs font-medium text-slate-500">평가 단계</p>
@@ -739,9 +934,9 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                       />
                       <div className="mt-2 flex items-center justify-end gap-2">
                         {isSaved && (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-800">
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-teal-700">
                             <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                            <span>{storageMode === 'api-connected' ? '저장됨' : '임시 반영됨'}</span>
+                            <span>저장됨</span>
                           </span>
                         )}
                         <button
@@ -750,11 +945,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                           onClick={() => handleUpdateReview(item, item.rubricLevel, feedbackDraft)}
                           className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 whitespace-nowrap"
                         >
-                          {isSaving
-                            ? '적용 중...'
-                            : storageMode === 'api-connected'
-                            ? '피드백 저장'
-                            : '피드백 반영 (저장 준비 중)'}
+                          {isSaving ? '저장 중...' : '피드백 저장'}
                         </button>
                       </div>
                     </div>

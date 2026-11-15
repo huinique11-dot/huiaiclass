@@ -1,4 +1,4 @@
-import type { LessonConfig, RubricLevel, StudentResponse } from '../types.ts';
+import type { LessonConfig, RubricLevel, StudentResponse, TeacherSessionState } from '../types.ts';
 
 export type StorageMode = 'api-connected' | 'pending-setup';
 
@@ -13,15 +13,21 @@ export const DEFAULT_LESSON: LessonConfig = {
     '당시 시대 상황에 자신을 대입하여 음악을 감상하고, 그 시대 사람들의 마음과 욕망에 공감하며 느낀 개인의 감성을 문장으로 표현해 봅시다.',
   shareWithClass: true,
   isCustomized: false,
-  updatedAt: new Date().toISOString(),
+  updatedAt: new Date(0).toISOString(),
 };
 
-const DRAFT_LESSON_KEY = 'music_era_stage3_draft_lesson_v1';
-const DRAFT_RESPONSES_KEY = 'music_era_stage3_draft_responses_v1';
+interface ApiResult<T> {
+  connected: boolean;
+  ok: boolean;
+  status: number;
+  data?: T;
+  error?: string;
+}
 
-async function fetchApiJson<T>(url: string, init?: RequestInit): Promise<{ ok: true; data: T } | { ok: false }> {
+async function requestApi<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
     const res = await fetch(url, {
+      credentials: 'same-origin',
       ...init,
       headers: {
         Accept: 'application/json',
@@ -29,220 +35,209 @@ async function fetchApiJson<T>(url: string, init?: RequestInit): Promise<{ ok: t
         ...(init?.headers ?? {}),
       },
     });
+
     const contentType = res.headers.get('content-type') || '';
-    // Vite SPA dev server returns index.html (text/html) for unknown /api routes.
-    // Treat non-JSON or 404/501/503 responses as backend not connected yet.
-    if (!res.ok || !contentType.includes('application/json')) {
-      return { ok: false };
+    if (res.status === 204) {
+      return { connected: true, ok: true, status: 204 };
     }
-    const data = (await res.json()) as T;
-    return { ok: true, data };
+
+    if (!contentType.includes('application/json')) {
+      return {
+        connected: false,
+        ok: false,
+        status: res.status,
+        error: '데이터 저장소(/api)가 아직 연결되지 않았습니다. (저장 준비 중)',
+      };
+    }
+
+    const parsed = (await res.json()) as T & { error?: string };
+    if (!res.ok) {
+      return {
+        connected: res.status !== 503,
+        ok: false,
+        status: res.status,
+        error: parsed?.error || '요청을 처리하지 못했습니다.',
+      };
+    }
+
+    return { connected: true, ok: true, status: res.status, data: parsed };
   } catch {
-    return { ok: false };
+    return {
+      connected: false,
+      ok: false,
+      status: 0,
+      error: '데이터 저장소(/api)에 연결할 수 없습니다. (저장 준비 중)',
+    };
   }
 }
 
-function readLocalLesson(): LessonConfig {
-  try {
-    const raw = window.localStorage.getItem(DRAFT_LESSON_KEY);
-    if (!raw) return DEFAULT_LESSON;
-    return { ...DEFAULT_LESSON, ...(JSON.parse(raw) as Partial<LessonConfig>) };
-  } catch {
-    return DEFAULT_LESSON;
-  }
-}
-
-function writeLocalLesson(lesson: LessonConfig): void {
-  try {
-    window.localStorage.setItem(DRAFT_LESSON_KEY, JSON.stringify(lesson));
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-function readLocalResponses(): StudentResponse[] {
-  try {
-    const raw = window.localStorage.getItem(DRAFT_RESPONSES_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((item) => ({
-      ...(item as StudentResponse),
-      studentId: typeof item?.studentId === 'string' ? item.studentId : '',
-    }));
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalResponses(list: StudentResponse[]): void {
-  try {
-    window.localStorage.setItem(DRAFT_RESPONSES_KEY, JSON.stringify(list));
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-export async function loadClassroomState(): Promise<{
+export async function loadInitialState(myCreds: { id: string; token: string } | null): Promise<{
   storageMode: StorageMode;
   lesson: LessonConfig;
-  responses: StudentResponse[];
+  publicResponses: StudentResponse[];
+  myResponse: StudentResponse | null;
+  teacherSession: TeacherSessionState;
+  statusMessage: string;
 }> {
-  const [lessonResult, responsesResult] = await Promise.all([
-    fetchApiJson<LessonConfig>('/api/lesson'),
-    fetchApiJson<StudentResponse[]>('/api/responses'),
-  ]);
+  const healthRes = await requestApi<{ ok: boolean; dbConnected: boolean }>('/api/health');
 
-  if (lessonResult.ok && responsesResult.ok) {
+  if (!healthRes.connected || !healthRes.ok) {
     return {
-      storageMode: 'api-connected',
-      lesson: lessonResult.data,
-      responses: responsesResult.data,
+      storageMode: 'pending-setup',
+      lesson: DEFAULT_LESSON,
+      publicResponses: [],
+      myResponse: null,
+      teacherSession: { authenticated: false, passwordConfigured: false },
+      statusMessage: healthRes.error || '데이터 저장소(/api)가 아직 연결되지 않았습니다. (저장 준비 중)',
     };
   }
 
+  const [lessonRes, publicRes, sessionRes, myRes] = await Promise.all([
+    requestApi<LessonConfig>('/api/lesson'),
+    requestApi<StudentResponse[]>('/api/public-responses'),
+    requestApi<TeacherSessionState>('/api/teacher/session'),
+    myCreds
+      ? requestApi<StudentResponse>(
+          `/api/my-response?id=${encodeURIComponent(myCreds.id)}&token=${encodeURIComponent(myCreds.token)}`,
+        )
+      : Promise.resolve(null),
+  ]);
+
   return {
-    storageMode: 'pending-setup',
-    lesson: readLocalLesson(),
-    responses: readLocalResponses(),
+    storageMode: 'api-connected',
+    lesson: lessonRes.ok && lessonRes.data ? lessonRes.data : DEFAULT_LESSON,
+    publicResponses: publicRes.ok && Array.isArray(publicRes.data) ? publicRes.data : [],
+    myResponse: myRes && myRes.ok && myRes.data ? myRes.data : null,
+    teacherSession:
+      sessionRes.ok && sessionRes.data
+        ? sessionRes.data
+        : { authenticated: false, passwordConfigured: false },
+    statusMessage: '',
   };
 }
 
-export async function saveLessonConfig(
-  next: Omit<LessonConfig, 'isCustomized' | 'updatedAt'>,
-): Promise<{ storageMode: StorageMode; lesson: LessonConfig }> {
-  const apiResult = await fetchApiJson<LessonConfig>('/api/lesson', {
-    method: 'PUT',
-    body: JSON.stringify(next),
-  });
-
-  if (apiResult.ok) {
-    return { storageMode: 'api-connected', lesson: apiResult.data };
+export async function fetchPublicResponses(): Promise<{
+  storageMode: StorageMode;
+  responses: StudentResponse[];
+  error?: string;
+}> {
+  const res = await requestApi<StudentResponse[]>('/api/public-responses');
+  if (!res.connected) {
+    return { storageMode: 'pending-setup', responses: [], error: res.error };
   }
-
-  const localLesson: LessonConfig = {
-    ...next,
-    isCustomized: true,
-    updatedAt: new Date().toISOString(),
-  };
-  writeLocalLesson(localLesson);
-  return { storageMode: 'pending-setup', lesson: localLesson };
+  if (!res.ok || !res.data) {
+    return { storageMode: 'api-connected', responses: [], error: res.error };
+  }
+  return { storageMode: 'api-connected', responses: res.data };
 }
 
 export async function submitStudentResponse(payload: {
   id?: string;
+  editToken?: string;
   studentId: string;
   studentName: string;
   classGroup: string;
   reflectionText: string;
   presentConnection: string;
-}): Promise<{ storageMode: StorageMode; response: StudentResponse }> {
-  if (payload.id) {
-    const apiResult = await fetchApiJson<StudentResponse>(`/api/responses/${payload.id}`, {
+  isPublic: boolean;
+}): Promise<{ response: StudentResponse; editToken?: string }> {
+  if (payload.id && payload.editToken) {
+    const res = await requestApi<StudentResponse>(`/api/my-response/${encodeURIComponent(payload.id)}`, {
       method: 'PATCH',
       body: JSON.stringify({
+        editToken: payload.editToken,
         studentId: payload.studentId,
         studentName: payload.studentName,
         classGroup: payload.classGroup,
         reflectionText: payload.reflectionText,
         presentConnection: payload.presentConnection,
+        isPublic: payload.isPublic,
       }),
     });
-    if (apiResult.ok) {
-      return { storageMode: 'api-connected', response: apiResult.data };
+    if (!res.ok || !res.data) {
+      throw new Error(res.error || '수정한 응답을 저장하지 못했습니다.');
     }
-  } else {
-    const apiResult = await fetchApiJson<StudentResponse>('/api/responses', {
-      method: 'POST',
-      body: JSON.stringify({
-        studentId: payload.studentId,
-        studentName: payload.studentName,
-        classGroup: payload.classGroup,
-        reflectionText: payload.reflectionText,
-        presentConnection: payload.presentConnection,
-      }),
-    });
-    if (apiResult.ok) {
-      return { storageMode: 'api-connected', response: apiResult.data };
-    }
+    return { response: res.data, editToken: payload.editToken };
   }
 
-  const now = new Date().toISOString();
-  const list = readLocalResponses();
-  if (payload.id) {
-    const idx = list.findIndex((item) => item.id === payload.id);
-    if (idx !== -1) {
-      const updated: StudentResponse = {
-        ...list[idx],
-        studentId: payload.studentId,
-        studentName: payload.studentName,
-        classGroup: payload.classGroup,
-        reflectionText: payload.reflectionText,
-        presentConnection: payload.presentConnection,
-        updatedAt: now,
-      };
-      list[idx] = updated;
-      writeLocalResponses(list);
-      return { storageMode: 'pending-setup', response: updated };
-    }
-  }
+  const res = await requestApi<{ response: StudentResponse; editToken: string }>('/api/responses', {
+    method: 'POST',
+    body: JSON.stringify({
+      studentId: payload.studentId,
+      studentName: payload.studentName,
+      classGroup: payload.classGroup,
+      reflectionText: payload.reflectionText,
+      presentConnection: payload.presentConnection,
+      isPublic: payload.isPublic,
+    }),
+  });
 
-  const created: StudentResponse = {
-    id: crypto.randomUUID ? crypto.randomUUID() : `local-${Date.now()}`,
-    studentId: payload.studentId,
-    studentName: payload.studentName,
-    classGroup: payload.classGroup,
-    reflectionText: payload.reflectionText,
-    presentConnection: payload.presentConnection,
-    rubricLevel: '',
-    teacherFeedback: '',
-    createdAt: now,
-    updatedAt: now,
-  };
-  writeLocalResponses([created, ...list]);
-  return { storageMode: 'pending-setup', response: created };
+  if (!res.ok || !res.data) {
+    throw new Error(res.error || '응답을 저장하지 못했습니다.');
+  }
+  return res.data;
+}
+
+export async function loginTeacher(password: string): Promise<void> {
+  const res = await requestApi<{ authenticated: boolean }>('/api/teacher/login', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) {
+    throw new Error(res.error || '교사 로그인에 실패했습니다.');
+  }
+}
+
+export async function logoutTeacher(): Promise<void> {
+  const res = await requestApi<{ authenticated: boolean }>('/api/teacher/logout', {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    throw new Error(res.error || '로그아웃 처리에 실패했습니다.');
+  }
+}
+
+export async function fetchTeacherResponses(): Promise<StudentResponse[]> {
+  const res = await requestApi<StudentResponse[]>('/api/responses');
+  if (!res.ok || !res.data) {
+    throw new Error(res.error || '학생 응답 목록을 불러오지 못했습니다.');
+  }
+  return res.data;
+}
+
+export async function saveLessonConfig(
+  next: Omit<LessonConfig, 'isCustomized' | 'updatedAt'>,
+): Promise<LessonConfig> {
+  const res = await requestApi<LessonConfig>('/api/lesson', {
+    method: 'PUT',
+    body: JSON.stringify(next),
+  });
+  if (!res.ok || !res.data) {
+    throw new Error(res.error || '수업 자료를 저장하지 못했습니다.');
+  }
+  return res.data;
 }
 
 export async function updateTeacherReview(
   id: string,
   rubricLevel: RubricLevel,
   teacherFeedback: string,
-): Promise<{ storageMode: StorageMode; response: StudentResponse | null }> {
-  const apiResult = await fetchApiJson<StudentResponse>(`/api/responses/${id}`, {
+): Promise<StudentResponse> {
+  const res = await requestApi<StudentResponse>(`/api/responses/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: JSON.stringify({ rubricLevel, teacherFeedback }),
   });
-  if (apiResult.ok) {
-    return { storageMode: 'api-connected', response: apiResult.data };
+  if (!res.ok || !res.data) {
+    throw new Error(res.error || '평가와 피드백을 저장하지 못했습니다.');
   }
-
-  const list = readLocalResponses();
-  const idx = list.findIndex((item) => item.id === id);
-  if (idx === -1) {
-    return { storageMode: 'pending-setup', response: null };
-  }
-  const updated: StudentResponse = {
-    ...list[idx],
-    rubricLevel,
-    teacherFeedback,
-    updatedAt: new Date().toISOString(),
-  };
-  list[idx] = updated;
-  writeLocalResponses(list);
-  return { storageMode: 'pending-setup', response: updated };
+  return res.data;
 }
 
-export async function deleteStudentResponse(id: string): Promise<{ storageMode: StorageMode }> {
-  try {
-    const res = await fetch(`/api/responses/${id}`, { method: 'DELETE' });
-    if (res.ok && res.status === 204) {
-      return { storageMode: 'api-connected' };
-    }
-  } catch {
-    // Fallback to pending-setup local draft removal
+export async function deleteStudentResponse(id: string): Promise<void> {
+  const res = await requestApi<void>(`/api/responses/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    throw new Error(res.error || '응답을 삭제하지 못했습니다.');
   }
-
-  const list = readLocalResponses().filter((item) => item.id !== id);
-  writeLocalResponses(list);
-  return { storageMode: 'pending-setup' };
 }

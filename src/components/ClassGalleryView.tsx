@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Clock, MessageSquareQuote, RefreshCw } from 'lucide-react';
+import { Clock, Lock, MessageSquareQuote, RefreshCw } from 'lucide-react';
 import type { StorageMode } from '../lib/classroomApi.ts';
 import type { LessonConfig, StudentResponse } from '../types.ts';
 
@@ -77,14 +77,15 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
           <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
             서로의 감상 관점 나누기
           </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-            같은 시대와 음악을 듣고도 친구들은 어떤 입장과 마음으로 공감했을지 읽어 보세요.
+          <p className="mt-2 flex items-center gap-1.5 text-sm leading-relaxed text-slate-600">
+            <Lock className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden="true" />
+            <span>학급 공개를 선택한 친구들의 글만 표시됩니다. 비공개 글은 교사만 볼 수 있습니다.</span>
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs tabular-nums text-slate-500">
-            {storageMode === 'api-connected' ? '제출' : '임시 기록'} {responses.length}건
+            공개 글 {responses.length}건
           </span>
           <button
             type="button"
@@ -104,7 +105,7 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
         >
           <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
           <span>
-            저장 준비 중: 현재는 D1 데이터베이스 연결 전이므로, 이 기기에서 입력한 임시 글만 표시됩니다.
+            저장 준비 중: 아직 Cloudflare D1 데이터베이스가 연결되지 않아 공개된 글을 불러올 수 없습니다.
           </span>
         </div>
       )}
@@ -130,9 +131,9 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
 
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center sm:p-12">
-          <p className="text-base font-medium text-slate-900">아직 등록된 감성 문장이 없습니다</p>
+          <p className="text-base font-medium text-slate-900">공개된 감성 문장이 아직 없습니다</p>
           <p className="mt-1.5 text-sm text-slate-500">
-            시대 상황에 대입한 나의 감상 문장을 먼저 입력해 보세요.
+            활동지에서 ‘서로의 관점에 내 글 공개하기’를 선택해 첫 관점을 나누어 보세요.
           </p>
           <button
             type="button"
