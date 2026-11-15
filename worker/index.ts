@@ -75,7 +75,11 @@ interface EraSongInput {
   id: string;
   title: string;
   url: string;
+  form?: string;
+  movement?: string;
 }
+
+const FORM_KEYS = ['독창', '중창', '합창', '독주', '중주', '관현악·합주', '협주곡', '성악과 기악', '전자·미디어'];
 
 interface EraInput {
   id: string;
@@ -276,7 +280,14 @@ function sanitizeEras(raw: unknown): EraInput[] | string {
       const urlCheck = sanitizeHttpUrl(sr.url);
       if (!urlCheck.valid) return `「${title}」 ${si + 1}번 곡의 링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.`;
       if (!songTitle && !urlCheck.value) continue;
-      songs.push({ id: cleanText(sr.id, 64) || crypto.randomUUID(), title: songTitle || `감상곡 ${si + 1}`, url: urlCheck.value });
+      const form = cleanText(sr.form, 20);
+      songs.push({
+        id: cleanText(sr.id, 64) || crypto.randomUUID(),
+        title: songTitle || `감상곡 ${si + 1}`,
+        url: urlCheck.value,
+        form: FORM_KEYS.includes(form) ? form : '',
+        movement: cleanText(sr.movement, 40),
+      });
     }
     const artworks: ArtworkInput[] = [];
     // 시대별 시각 자료는 개수 제한 없음(비정상 요청 방지용 상한 100)

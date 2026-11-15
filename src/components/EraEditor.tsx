@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, Image as ImageIcon, ImageOff, Plus, Trash2 } from 'lucide-react';
 import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
 import { looksLikeImageUrl, toImageUrl } from '../lib/imageUrl.ts';
+import { PERFORMANCE_FORMS } from '../lib/performanceForms.ts';
 import type { ArtworkItem, Era } from '../types.ts';
 import { ArtworkGallery } from './ArtworkGallery.tsx';
 
@@ -149,6 +150,22 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
                     className="min-h-[40px] rounded-lg border border-slate-300 px-3 text-slate-500 hover:bg-red-50 hover:text-red-700">
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
                   </button>
+                  <div className="grid gap-2 sm:col-span-3 sm:grid-cols-[14rem_1fr]">
+                    <select className={inputCls} value={song.form ?? ''} aria-label={`감상곡 ${si + 1} 연주 형태`}
+                      onChange={(e) => patchEra({ songs: era.songs.map((s) => (s.id === song.id ? { ...s, form: e.target.value } : s)) })}>
+                      <option value="">연주 형태 고르기</option>
+                      {(['성악', '기악', '성악+기악', '기타'] as const).map((g) => (
+                        <optgroup key={g} label={g}>
+                          {PERFORMANCE_FORMS.filter((f) => f.group === g).map((f) => (
+                            <option key={f.key} value={f.key}>{f.key}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <input className={inputCls} maxLength={40} value={song.movement ?? ''} aria-label={`감상곡 ${si + 1} 사조`}
+                      placeholder="사조·양식 (선택, 예: 인상주의, 미니멀리즘, 영화음악)"
+                      onChange={(e) => patchEra({ songs: era.songs.map((s) => (s.id === song.id ? { ...s, movement: e.target.value } : s)) })} />
+                  </div>
                 </div>
               );
             })}

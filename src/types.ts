@@ -11,6 +11,8 @@ export interface EraSong {
   id: string;
   title: string;
   url: string;
+  form?: string; // 연주 형태 (독창, 합창, 독주, 중주, 관현악·합주 …)
+  movement?: string; // 사조·양식 (예: 인상주의, 미니멀리즘)
 }
 
 // 시대마다 역사적 배경·미술 시각 자료는 공통, 대표 감상곡은 여러 곡 중 선택
