@@ -121,10 +121,6 @@ function sanitizeArtworkImageUrl(raw: unknown): { valid: boolean; value: string 
   if (typeof raw !== 'string') return { valid: true, value: '' };
   const trimmed = raw.trim();
   if (!trimmed) return { valid: true, value: '' };
-  if (/^data:image\/(jpeg|jpg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(trimmed)) {
-    if (trimmed.length > 450000) return { valid: false, value: '' };
-    return { valid: true, value: trimmed };
-  }
   if (trimmed.length > 1000) return { valid: false, value: '' };
   try {
     const parsed = new URL(trimmed);

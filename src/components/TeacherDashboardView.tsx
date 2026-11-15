@@ -7,6 +7,7 @@ import {
   Download,
   ExternalLink,
   Image as ImageIcon,
+  ImageOff,
   LayoutGrid,
   Lock,
   LogOut,
@@ -15,7 +16,6 @@ import {
   Settings2,
   Table2,
   Trash2,
-  Upload,
 } from 'lucide-react';
 import {
   deleteStudentResponse,
@@ -25,7 +25,6 @@ import {
   updateTeacherReview,
   type StorageMode,
 } from '../lib/classroomApi.ts';
-import { compressArtworkImageFile } from '../lib/imageUpload.ts';
 import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
 import type {
   ArtworkItem,
@@ -123,8 +122,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const [artworkNote, setArtworkNote] = useState(lesson.artworkNote);
   const [artworkSlots, setArtworkSlots] = useState<ArtworkItem[]>(() => buildArtworkSlots(lesson.artworks));
   const [artworkPreviewMode, setArtworkPreviewMode] = useState(false);
-  const [uploadingSlot, setUploadingSlot] = useState<number | null>(null);
-  const [artworkUploadError, setArtworkUploadError] = useState('');
+  const [brokenPreviewSlots, setBrokenPreviewSlots] = useState<Record<number, boolean>>({});
   const [empathyPrompt, setEmpathyPrompt] = useState(lesson.empathyPrompt);
   const [shareWithClass, setShareWithClass] = useState(lesson.shareWithClass);
   const [savingLesson, setSavingLesson] = useState(false);
@@ -138,6 +136,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     setHistoricalContext(lesson.historicalContext);
     setArtworkNote(lesson.artworkNote);
     setArtworkSlots(buildArtworkSlots(lesson.artworks));
+    setBrokenPreviewSlots({});
     setEmpathyPrompt(lesson.empathyPrompt);
     setShareWithClass(lesson.shareWithClass);
   }, [lesson]);
@@ -244,21 +243,8 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     setArtworkSlots((prev) =>
       prev.map((slot) => (slot.slotIndex === slotIndex ? { ...slot, ...patch } : slot)),
     );
-  };
-
-  const handleArtworkFileChange = async (slotIndex: number, file: File | null) => {
-    if (!file) return;
-    setArtworkUploadError('');
-    setUploadingSlot(slotIndex);
-    try {
-      const compressedDataUrl = await compressArtworkImageFile(file);
-      updateArtworkSlot(slotIndex, { imageUrl: compressedDataUrl });
-    } catch (err) {
-      setArtworkUploadError(
-        err instanceof Error ? err.message : '이미지 파일을 처리하지 못했습니다.',
-      );
-    } finally {
-      setUploadingSlot(null);
+    if (patch.imageUrl !== undefined) {
+      setBrokenPreviewSlots((prev) => ({ ...prev, [slotIndex]: false }));
     }
   };
 
@@ -662,7 +648,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                     함께 보는 미술 · 시각 자료 (2×2 갤러리, 최대 4점)
                   </h3>
                   <p className="mt-0.5 text-xs text-slate-500">
-                    각 칸에 사진(파일 업로드 또는 이미지 주소), 제목, 설명을 넣으면 학생 화면에 2×2 갤러리로 보입니다.
+                    각 칸에 사진 웹 링크(https://...), 그림 제목, 작품 설명을 넣으면 학생 화면에 2×2 갤러리로 보입니다.
                   </p>
                 </div>
 
@@ -674,7 +660,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                       !artworkPreviewMode ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    2×2 올리기·수정
+                    2×2 링크 입력·수정
                   </button>
                   <button
                     type="button"
@@ -688,33 +674,24 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                 </div>
               </div>
 
-              {artworkUploadError && (
-                <div
-                  role="alert"
-                  className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-800"
-                >
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-700" aria-hidden="true" />
-                  <span>{artworkUploadError}</span>
-                </div>
-              )}
-
               {artworkPreviewMode ? (
                 <div className="mx-auto max-w-md rounded-lg border border-slate-200 bg-white p-4">
                   {activeArtworksPreview.length > 0 ? (
                     <ArtworkGallery artworks={activeArtworksPreview} />
                   ) : (
                     <p className="py-6 text-center text-xs text-slate-500">
-                      등록된 미술·시각 자료가 아직 없습니다. ‘2×2 올리기·수정’에서 그림을 추가해 보세요.
+                      등록된 미술·시각 자료가 아직 없습니다. ‘2×2 링크 입력·수정’에서 그림 링크를 추가해 보세요.
                     </p>
                   )}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {artworkSlots.map((slot) => {
-                    const isDataUrl = slot.imageUrl.startsWith('data:image/');
-                    const isUploading = uploadingSlot === slot.slotIndex;
+                    const trimmedUrl = slot.imageUrl.trim();
+                    const isUrlValid = isValidHttpUrl(trimmedUrl);
+                    const isBroken = Boolean(brokenPreviewSlots[slot.slotIndex]);
                     const hasAnyValue = Boolean(
-                      slot.title.trim() || slot.imageUrl.trim() || slot.description.trim(),
+                      slot.title.trim() || trimmedUrl || slot.description.trim(),
                     );
 
                     return (
@@ -744,73 +721,57 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                         </div>
 
                         <div className="aspect-[4/3] w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-                          {slot.imageUrl ? (
+                          {isUrlValid && !isBroken ? (
                             <img
-                              src={slot.imageUrl}
+                              src={trimmedUrl}
                               alt={slot.title || `작품 ${slot.slotIndex + 1} 미리보기`}
                               referrerPolicy="no-referrer"
+                              onError={() =>
+                                setBrokenPreviewSlots((prev) => ({
+                                  ...prev,
+                                  [slot.slotIndex]: true,
+                                }))
+                              }
                               className="h-full w-full object-cover"
                             />
                           ) : (
-                            <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-slate-400">
-                              <ImageIcon className="h-6 w-6" aria-hidden="true" />
-                              <span className="text-xs">사진을 올리거나 이미지 주소를 입력하세요</span>
+                            <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center text-slate-400">
+                              {isBroken ? (
+                                <>
+                                  <ImageOff className="h-6 w-6 text-amber-600" aria-hidden="true" />
+                                  <span className="text-xs leading-snug text-amber-800">
+                                    사진을 불러오지 못했습니다. 이미지 직접 주소를 확인해 주세요.
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <ImageIcon className="h-6 w-6" aria-hidden="true" />
+                                  <span className="text-xs">아래에 사진 웹 링크를 넣으면 사진이 뜹니다</span>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
-                          <label className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap">
-                            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                            <span>{isUploading ? '처리 중...' : '사진 올리기'}</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              disabled={isUploading}
-                              onChange={(e) => {
-                                const file = e.target.files?.[0] ?? null;
-                                void handleArtworkFileChange(slot.slotIndex, file);
-                                e.target.value = '';
-                              }}
-                              className="sr-only"
-                            />
+                        <div>
+                          <label
+                            htmlFor={`art-url-${slot.slotIndex}`}
+                            className="block text-[11px] font-medium text-slate-600"
+                          >
+                            사진 웹 링크 (https://...)
                           </label>
-                          {slot.imageUrl && (
-                            <button
-                              type="button"
-                              onClick={() => updateArtworkSlot(slot.slotIndex, { imageUrl: '' })}
-                              className="min-h-[40px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 whitespace-nowrap"
-                            >
-                              사진 지우기
-                            </button>
-                          )}
+                          <input
+                            id={`art-url-${slot.slotIndex}`}
+                            type="url"
+                            maxLength={1000}
+                            value={slot.imageUrl}
+                            onChange={(e) =>
+                              updateArtworkSlot(slot.slotIndex, { imageUrl: e.target.value })
+                            }
+                            placeholder="https://... 이미지 주소를 붙여넣으세요"
+                            className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-300 px-3 py-1.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-xs"
+                          />
                         </div>
-
-                        {!isDataUrl ? (
-                          <div>
-                            <label
-                              htmlFor={`art-url-${slot.slotIndex}`}
-                              className="block text-[11px] font-medium text-slate-500"
-                            >
-                              또는 이미지 주소 (https://...)
-                            </label>
-                            <input
-                              id={`art-url-${slot.slotIndex}`}
-                              type="url"
-                              maxLength={1000}
-                              value={slot.imageUrl}
-                              onChange={(e) =>
-                                updateArtworkSlot(slot.slotIndex, { imageUrl: e.target.value })
-                              }
-                              placeholder="https://... (직접 올리지 않을 때)"
-                              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-300 px-3 py-1.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-xs"
-                            />
-                          </div>
-                        ) : (
-                          <p className="text-[11px] font-medium text-teal-800">
-                            직접 올린 사진이 압축되어 준비되었습니다.
-                          </p>
-                        )}
 
                         <div>
                           <label
