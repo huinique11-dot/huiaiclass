@@ -10,6 +10,7 @@ import {
 import { StudentActivityView } from './components/StudentActivityView.tsx';
 import { ClassGalleryView } from './components/ClassGalleryView.tsx';
 import { TeacherDashboardView } from './components/TeacherDashboardView.tsx';
+import { ChristmasLights, ChristmasSky } from './components/ChristmasDecor.tsx';
 import type { LessonConfig, StudentResponse, TeacherSessionState } from './types.ts';
 
 type ActiveTab = 'activity' | 'gallery' | 'teacher';
@@ -190,26 +191,28 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+    <div className="relative min-h-screen flex flex-col text-slate-900">
+      <ChristmasSky />
       {/* Top Bar Contract: 3 zones separated by gap-8 */}
-      <header className="border-b border-slate-200 bg-white">
+      <header className="xmas-velvet relative z-20 border-b border-xmas-gold/40 text-xmas-cream">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3.5 sm:gap-8 sm:px-6 sm:py-4">
           {/* Zone 1: Single text element wordmark */}
           <button
             type="button"
             onClick={() => setActiveTab('activity')}
-            className="font-editorial min-h-[44px] text-left text-base font-semibold tracking-tight text-slate-900 whitespace-nowrap shrink-0 cursor-pointer sm:text-lg"
+            className="font-editorial min-h-[44px] text-left text-base font-semibold tracking-tight whitespace-nowrap shrink-0 cursor-pointer sm:text-lg"
           >
-            음악으로 시대 읽기
+            <span aria-hidden="true" className="mr-1.5">🎄</span>
+            <span className="gold-shimmer">음악으로 시대 읽기</span>
           </button>
 
           {/* Zone 2: 4 concise single-line text nav links */}
-          <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600" aria-label="주 메뉴">
+          <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-xmas-blush" aria-label="주 메뉴">
             <button
               type="button"
               onClick={scrollToGuide}
               className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'activity' ? 'text-slate-900 underline underline-offset-8' : 'hover:text-slate-900'
+                activeTab === 'activity' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
               }`}
             >
               수업 안내
@@ -217,7 +220,7 @@ export default function App() {
             <button
               type="button"
               onClick={scrollToWorksheet}
-              className="transition-colors hover:text-slate-900 whitespace-nowrap shrink-0 cursor-pointer"
+              className="transition-colors hover:text-white whitespace-nowrap shrink-0 cursor-pointer"
             >
               감상·활동지
             </button>
@@ -225,7 +228,7 @@ export default function App() {
               type="button"
               onClick={() => setActiveTab('gallery')}
               className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'gallery' ? 'text-slate-900 underline underline-offset-8' : 'hover:text-slate-900'
+                activeTab === 'gallery' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
               }`}
             >
               서로의 관점
@@ -234,7 +237,7 @@ export default function App() {
               type="button"
               onClick={() => setActiveTab('teacher')}
               className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'teacher' ? 'text-slate-900 underline underline-offset-8' : 'hover:text-slate-900'
+                activeTab === 'teacher' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
               }`}
             >
               교사 확인
@@ -246,23 +249,23 @@ export default function App() {
             <button
               type="button"
               onClick={scrollToWorksheet}
-              className="min-h-[44px] rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0 cursor-pointer sm:text-sm"
+              className="gold-button min-h-[44px] rounded-lg px-4 py-2 text-xs font-semibold transition whitespace-nowrap shrink-0 cursor-pointer sm:text-sm"
             >
-              감성 문장 쓰기
+              ✦ 감성 문장 쓰기
             </button>
           </div>
         </div>
 
         {/* Mobile navigation row */}
         <nav
-          className="grid grid-cols-3 border-t border-slate-100 px-2 md:hidden"
+          className="grid grid-cols-3 border-t border-xmas-gold/20 px-2 md:hidden"
           aria-label="모바일 메뉴"
         >
           <button
             type="button"
             onClick={() => setActiveTab('activity')}
             className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
-              activeTab === 'activity' ? 'font-semibold text-slate-900 underline underline-offset-8' : 'font-medium text-slate-600'
+              activeTab === 'activity' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
             }`}
           >
             감상·활동지
@@ -271,7 +274,7 @@ export default function App() {
             type="button"
             onClick={() => setActiveTab('gallery')}
             className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
-              activeTab === 'gallery' ? 'font-semibold text-slate-900 underline underline-offset-8' : 'font-medium text-slate-600'
+              activeTab === 'gallery' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
             }`}
           >
             서로의 관점
@@ -280,16 +283,17 @@ export default function App() {
             type="button"
             onClick={() => setActiveTab('teacher')}
             className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
-              activeTab === 'teacher' ? 'font-semibold text-slate-900 underline underline-offset-8' : 'font-medium text-slate-600'
+              activeTab === 'teacher' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
             }`}
           >
             교사 확인
           </button>
         </nav>
+        <ChristmasLights />
       </header>
 
       {/* Main Content */}
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
+      <main className="relative z-10 mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-12">
         {loading ? (
           <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-500">
             수업 활동 화면을 불러오는 중입니다...
@@ -345,8 +349,8 @@ export default function App() {
       </main>
 
       {/* Quiet Editorial Footer */}
-      <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-5 text-xs text-slate-500 sm:gap-4 sm:px-6">
+      <footer className="xmas-pine relative z-10 border-t-2 border-xmas-gold/50">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-5 text-xs text-teal-100 sm:gap-4 sm:px-6">
           <span>
             [읽걷쓰AI 프로젝트 수업] 무엇을 욕망했는가- 음악으로 시대 읽고 공감하기 · 3단계(5~6차시)
           </span>

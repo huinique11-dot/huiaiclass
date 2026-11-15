@@ -4,6 +4,43 @@
   --font-sans: "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
   --font-serif: "Noto Serif KR", Georgia, serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* 크리스마스 팔레트: 와인 · 크림슨 · 에버그린 · 골드 · 블러시 핑크 · 크림
+     컴포넌트의 기존 클래스명(slate/teal/amber/white)은 그대로 두고 색만 바꿉니다. */
+  --color-white: #fffcf8;
+  --color-slate-50: #fbf5ef;
+  --color-slate-100: #f5eae1;
+  --color-slate-200: #ebdacd;
+  --color-slate-300: #dbc3b6;
+  --color-slate-400: #b39791;
+  --color-slate-500: #876b6d;
+  --color-slate-600: #6c4f55;
+  --color-slate-700: #583941;
+  --color-slate-800: #7c1329;
+  --color-slate-900: #4d0d1e;
+  --color-slate-950: #2c0711;
+
+  --color-teal-50: #eef6ef;
+  --color-teal-100: #d9ecdc;
+  --color-teal-200: #b9dbbf;
+  --color-teal-700: #2e6b3b;
+  --color-teal-800: #245731;
+  --color-teal-900: #1b4426;
+
+  --color-amber-50: #fdf7e6;
+  --color-amber-200: #efd892;
+  --color-amber-600: #b5841d;
+  --color-amber-700: #916716;
+  --color-amber-800: #775314;
+  --color-amber-900: #5d4112;
+  --color-amber-950: #392709;
+
+  --color-xmas-wine: #4d0d1e;
+  --color-xmas-crimson: #a3132f;
+  --color-xmas-pine: #24502f;
+  --color-xmas-gold: #e2b649;
+  --color-xmas-blush: #f2c4d2;
+  --color-xmas-cream: #fbf5ef;
 }
 
 @layer base {
@@ -12,13 +49,154 @@
     scroll-behavior: smooth;
   }
 
+  body {
+    background-color: var(--color-slate-50);
+    background-image:
+      radial-gradient(ellipse at 0% 0%, rgba(163, 19, 47, 0.07), transparent 45%),
+      radial-gradient(ellipse at 100% 100%, rgba(36, 80, 47, 0.08), transparent 45%);
+    background-attachment: fixed;
+  }
+
   h1, h2, .font-editorial {
     font-family: var(--font-serif);
   }
+
+  ::selection {
+    background: var(--color-xmas-blush);
+    color: var(--color-xmas-wine);
+  }
+}
+
+/* ===== 크리스마스 반짝이 장식 ===== */
+@layer components {
+  /* 헤더: 와인 벨벳 */
+  .xmas-velvet {
+    background:
+      radial-gradient(ellipse at 20% -40%, rgba(226, 182, 73, 0.22), transparent 55%),
+      linear-gradient(180deg, #5e1024 0%, #430a1a 100%);
+  }
+  /* 푸터: 에버그린 */
+  .xmas-pine {
+    background: linear-gradient(180deg, #24502f 0%, #193a21 100%);
+  }
+
+  /* 골드 반짝 글씨 */
+  .gold-shimmer {
+    background: linear-gradient(100deg, #b5841d 0%, #f4dc95 25%, #fff8e1 32%, #e2b649 45%, #b5841d 60%, #f4dc95 80%, #cf9d2d 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: xmas-shimmer 5s linear infinite;
+  }
+
+  /* 골드 버튼 */
+  .gold-button {
+    background: linear-gradient(180deg, #f4dc95 0%, #e2b649 50%, #c7972c 100%);
+    color: #3a0a16;
+    box-shadow: 0 0 0 1px rgba(255, 240, 200, 0.5) inset, 0 2px 10px rgba(226, 182, 73, 0.35);
+  }
+  .gold-button:hover {
+    filter: brightness(1.07);
+    box-shadow: 0 0 0 1px rgba(255, 240, 200, 0.6) inset, 0 2px 16px rgba(226, 182, 73, 0.6);
+  }
+
+  /* 헤더 아래 꼬마전구 줄 */
+  .xmas-lights {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -9px;
+    height: 18px;
+    display: flex;
+    justify-content: space-around;
+    pointer-events: none;
+    z-index: 20;
+  }
+  .xmas-lights::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -2px;
+    height: 8px;
+    border-bottom: 2px solid #24502f;
+  }
+  .xmas-lights i {
+    position: relative;
+    top: 4px;
+    width: 8px;
+    height: 12px;
+    border-radius: 50% 50% 50% 50% / 40% 40% 60% 60%;
+    background: var(--c);
+    box-shadow: 0 0 9px 2px var(--c);
+    animation: xmas-bulb 1.8s ease-in-out infinite;
+    animation-delay: var(--delay, 0s);
+  }
+
+  /* 배경 반짝이 & 눈송이 */
+  .xmas-sky {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 0;
+  }
+  .xmas-sparkle {
+    position: absolute;
+    background: radial-gradient(circle, #fff8e1 0%, #e2b649 40%, transparent 72%);
+    clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
+    opacity: 0;
+    animation: xmas-twinkle var(--d, 3s) ease-in-out infinite;
+    animation-delay: var(--delay, 0s);
+  }
+  .xmas-snow {
+    position: absolute;
+    top: -12px;
+    border-radius: 9999px;
+    background: #ffffff;
+    box-shadow: 0 0 4px rgba(163, 19, 47, 0.18);
+    animation: xmas-snowfall var(--d, 14s) linear infinite;
+    animation-delay: var(--delay, 0s);
+  }
+}
+
+@media (max-width: 640px) {
+  .xmas-lights i:nth-child(2n) {
+    display: none;
+  }
+}
+
+@keyframes xmas-shimmer {
+  to { background-position: -220% 0; }
+}
+@keyframes xmas-bulb {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; box-shadow: 0 0 2px 0 var(--c); }
+}
+@keyframes xmas-twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.3) rotate(0deg); }
+  50% { opacity: 0.9; transform: scale(1) rotate(45deg); }
+}
+@keyframes xmas-snowfall {
+  0% { transform: translate(0, -10px); }
+  50% { transform: translate(var(--sway, 20px), 50vh); }
+  100% { transform: translate(0, 105vh); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  .gold-shimmer,
+  .xmas-lights i,
+  .xmas-sparkle {
+    animation: none;
+  }
+  .xmas-sparkle {
+    opacity: 0.5;
+  }
+  .xmas-snow {
+    display: none;
   }
 }
