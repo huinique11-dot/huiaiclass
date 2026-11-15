@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, Image as ImageIcon, ImageOff, Plus, Trash2 } from 'lucide-react';
 import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
+import { looksLikeImageUrl, toImageUrl } from '../lib/imageUrl.ts';
 import type { ArtworkItem, Era } from '../types.ts';
 import { ArtworkGallery } from './ArtworkGallery.tsx';
 
@@ -203,7 +204,7 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
                     </div>
                     <div className="aspect-[4/3] overflow-hidden rounded-md border border-slate-200 bg-slate-100">
                       {ok ? (
-                        <img src={slot.imageUrl.trim()} alt={slot.title || `작품 ${slot.slotIndex + 1}`} referrerPolicy="no-referrer"
+                        <img src={toImageUrl(slot.imageUrl)} alt={slot.title || `작품 ${slot.slotIndex + 1}`} referrerPolicy="no-referrer"
                           onError={() => setBroken((b) => ({ ...b, [key]: true }))} className="h-full w-full object-cover" />
                       ) : (
                         <div className="flex h-full flex-col items-center justify-center gap-1 px-3 text-center text-xs text-slate-400">
@@ -213,6 +214,13 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
                     </div>
                     <input className={inputCls} type="url" maxLength={1000} value={slot.imageUrl} placeholder="사진 웹 링크 https://..."
                       aria-label={`작품 ${slot.slotIndex + 1} 사진 링크`} onChange={(e) => patchSlot(slot.slotIndex, { imageUrl: e.target.value })} />
+                    {slot.imageUrl.trim() && (broken[key] || !looksLikeImageUrl(slot.imageUrl)) && (
+                      <p className="rounded-md bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-900">
+                        {broken[key] ? '이 주소로는 그림을 불러올 수 없어요. ' : '그림 파일이 아니라 웹 페이지 주소 같아요. '}
+                        그림 위에서 <b>마우스 오른쪽 클릭 → 「이미지 주소 복사」</b>한 주소(보통 .jpg, .png로 끝남)를 붙여 넣어 주세요.
+                        위키백과 「파일:」 페이지 주소와 구글 드라이브 공유 링크는 자동으로 바뀌어요.
+                      </p>
+                    )}
                     <input className={inputCls} maxLength={120} value={slot.title} placeholder="그림 제목과 화가"
                       aria-label={`작품 ${slot.slotIndex + 1} 제목`} onChange={(e) => patchSlot(slot.slotIndex, { title: e.target.value })} />
                     <textarea className={`${inputCls} min-h-[64px]`} maxLength={1200} value={slot.description} placeholder="작품 설명 (그림을 누르면 보여요)"

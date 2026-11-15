@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image as ImageIcon, ImageOff, X } from 'lucide-react';
 import type { ArtworkItem } from '../types.ts';
+import { toImageUrl } from '../lib/imageUrl.ts';
 
 interface ArtworkGalleryProps {
   artworks: ArtworkItem[];
@@ -54,7 +55,7 @@ export const ArtworkGallery: React.FC<ArtworkGalleryProps> = ({ artworks }) => {
                     <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100">
                       {item.imageUrl && !isBroken ? (
                         <img
-                          src={item.imageUrl}
+                          src={toImageUrl(item.imageUrl)}
                           alt={displayTitle}
                           referrerPolicy="no-referrer"
                           onError={() =>
