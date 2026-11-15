@@ -9,10 +9,8 @@
     "run_worker_first": ["/api/*"],
     "not_found_handling": "single-page-application"
   },
-  // 4단계 AI 분석(또래 음악)용 Cloudflare Workers AI — API 키 없이 사용
-  "ai": {
-    "binding": "AI"
-  },
+  // 4단계 AI 분석용 Workers AI 연결은 Cloudflare 빌드 실패 원인을 확인할 때까지 잠시 꺼 둠.
+  // 다시 켜려면 아래 주석을 풀면 됩니다:  "ai": { "binding": "AI" },
   "d1_databases": [
     {
       "binding": "DB",
