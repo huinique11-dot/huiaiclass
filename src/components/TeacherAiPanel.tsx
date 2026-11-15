@@ -1,26 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, ChevronDown, Download, Loader2, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, Download, RefreshCw, Trash2 } from 'lucide-react';
 import {
   AI_RUBRIC,
   JUDGMENT_LABELS,
   deleteAiActivity,
-  fetchAiStatus,
   fetchTeacherAiActivities,
   judgmentItems,
-  setAiEnabled,
   updateAiActivityEvaluation,
   type AiActivity,
-  type AiStatus,
 } from '../lib/aiApi.ts';
 import type { RubricLevel } from '../types.ts';
 import { AiResultView } from './AiAnalysisView.tsx';
 
 // 교사 화면: 4단계 AI 분석 비교 학습지 확인·평가
 export function TeacherAiPanel() {
-  const [status, setStatus] = useState<AiStatus | null>(null);
   const [items, setItems] = useState<AiActivity[]>([]);
   const [loading, setLoading] = useState(true);
-  const [toggling, setToggling] = useState(false);
   const [error, setError] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -28,9 +23,7 @@ export function TeacherAiPanel() {
     setLoading(true);
     setError('');
     try {
-      const [s, list] = await Promise.all([fetchAiStatus(), fetchTeacherAiActivities()]);
-      setStatus(s);
-      setItems(list);
+      setItems(await fetchTeacherAiActivities());
     } catch (err) {
       setError(err instanceof Error ? err.message : '4단계 활동을 불러오지 못했습니다.');
     } finally {
@@ -42,22 +35,8 @@ export function TeacherAiPanel() {
     load();
   }, [load]);
 
-  const toggle = async () => {
-    if (!status) return;
-    setToggling(true);
-    setError('');
-    try {
-      const res = await setAiEnabled(!status.enabled);
-      setStatus({ ...status, enabled: res.enabled, aiConnected: res.aiConnected });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI 설정을 바꾸지 못했습니다.');
-    } finally {
-      setToggling(false);
-    }
-  };
-
   const exportCsv = () => {
-    const header = ['학번', '별칭', '반·모둠', '곡', '가설', '분석 기준', 'AI 결과 요약', '판단', 'AI와 내 느낌 비교', '나만의 언어로 재구성', '악기 소리·노랫말 구절', 'AI 윤리 생각', '평가', '교사 피드백', '저장 시각'];
+    const header = ['학번', '별칭', '반·모둠', '곡', '가설', '분석 기준', 'AI 사용', 'AI 도구', '정리한 결과 요약', 'AI 답변 원문', '판단', 'AI와 내 느낌 비교', '나만의 언어로 재구성', '악기 소리·노랫말 구절', 'AI 윤리 생각', '평가', '교사 피드백', '저장 시각'];
     const rows = items.map((a) => {
       const labels = judgmentItems(a.aiResult);
       const judged = labels
@@ -71,7 +50,10 @@ export function TeacherAiPanel() {
         a.songs.map((s) => `${s.title}${s.artist ? ` - ${s.artist}` : ''}`).join(' / '),
         a.hypothesis,
         a.criterion === 'lyrics' ? '가사' : '음악적 특징',
+        a.aiResult?.source === 'self' ? 'AI 없이 직접' : 'AI 도움',
+        a.aiResult?.tool ?? '',
         a.aiResult?.summary ?? '',
+        a.aiResult?.rawText ?? '',
         judged,
         a.comparisonText,
         a.reconstructionText,
@@ -119,31 +101,10 @@ export function TeacherAiPanel() {
         </div>
       </div>
 
-      {/* AI 열기/닫기 */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5">
-        <div className="min-w-0">
-          <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <Sparkles className="h-4 w-4" aria-hidden="true" />
-            학생 AI 분석 {status?.enabled ? <span className="text-teal-700">열림</span> : <span className="text-slate-500">닫힘</span>}
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            수업 시간에만 열어 두세요. 학생 계정 없이 학교 서버(Cloudflare Workers AI)로 분석하며, 가사 원문과 학생 이름은 저장·전송하지 않습니다.
-          </p>
-          {status && !status.aiConnected && (
-            <p className="mt-2 text-xs text-red-700">
-              Workers AI가 아직 연결되지 않았습니다. wrangler.jsonc의 AI 바인딩이 배포되었는지 확인해 주세요.
-            </p>
-          )}
-        </div>
-        <button type="button" onClick={toggle} disabled={toggling || !status}
-          role="switch" aria-checked={Boolean(status?.enabled)}
-          className={`inline-flex min-h-[44px] items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold transition-colors disabled:opacity-60 ${
-            status?.enabled ? 'border border-slate-300 bg-white text-slate-800 hover:bg-slate-50' : 'bg-slate-900 text-white hover:bg-slate-800'
-          }`}>
-          {toggling && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-          {status?.enabled ? 'AI 분석 닫기' : 'AI 분석 열기'}
-        </button>
-      </div>
+      <p className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-xs leading-relaxed text-slate-600">
+        학생은 필요할 때만 각자 자기 계정의 AI 도구에 앱이 만든 질문을 붙여 넣고, 받은 답을 다시 붙여 넣은 뒤 핵심 항목을 직접 정리합니다.
+        AI 없이 직접 분석하는 것도 고를 수 있어요. 가사 원문은 앱에 저장되지 않습니다.
+      </p>
 
       {/* 평가 기준 */}
       <details className="rounded-xl border border-slate-200 bg-white p-5 text-sm">
@@ -243,6 +204,9 @@ function ActivityCard({
         <span className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-600">
           {a.criterion === 'lyrics' ? '가사' : '음악적 특징'}
         </span>
+        <span className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-600">
+          {a.aiResult?.source === 'self' ? 'AI 없이' : `AI${a.aiResult?.tool ? ` · ${a.aiResult.tool}` : ''}`}
+        </span>
         <span className="min-w-0 flex-1 truncate text-sm text-slate-600">{a.reconstructionText}</span>
         <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${a.rubricLevel ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'}`}>
           {a.rubricLevel || '미평가'}
@@ -261,9 +225,19 @@ function ActivityCard({
                 .join('\n')}
             </Row>
           )}
+          {a.aiResult?.rawText && (
+            <details className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <summary className="cursor-pointer text-xs font-medium text-slate-600">
+                [A] 학생이 붙여 넣은 AI 답변 원문{a.aiResult.tool ? ` (${a.aiResult.tool})` : ''}
+              </summary>
+              <p className="mt-2 whitespace-pre-line text-sm text-slate-800">{a.aiResult.rawText}</p>
+            </details>
+          )}
           {a.aiResult && (
             <div>
-              <p className="text-xs font-medium text-slate-500">[A] AI 분석 결과</p>
+              <p className="text-xs font-medium text-slate-500">
+                {a.aiResult.source === 'self' ? '[H] AI 없이 직접 찾은 결과' : '[H] AI 답에서 학생이 정리한 핵심 항목'}
+              </p>
               <AiResultView result={a.aiResult} />
             </div>
           )}

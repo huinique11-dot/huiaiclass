@@ -1,4 +1,4 @@
-import { handleAiRoutes, type WorkersAI } from './aiActivity.ts';
+import { handleAiRoutes } from './aiActivity.ts';
 
 interface D1Result<T = Record<string, unknown>> {
   results?: T[];
@@ -25,8 +25,6 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   TEACHER_PASSWORD?: string;
-  AI?: WorkersAI;
-  AI_MODEL?: string;
 }
 
 interface LessonRow {
@@ -493,7 +491,7 @@ export default {
     try {
       await ensureSchema(env.DB);
 
-      // 4단계 또래 음악 H-A-H 활동 (/api/ai/*)
+      // 4단계 또래 음악 H-A-H 활동 기록 (/api/ai/*) — 서버는 AI를 호출하지 않음
       const aiResponse = await handleAiRoutes(request, env, url, {
         jsonResponse,
         cleanText,

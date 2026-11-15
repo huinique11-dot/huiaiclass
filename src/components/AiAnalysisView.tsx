@@ -3,10 +3,11 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
+  Bot,
   CheckCircle2,
-  Loader2,
-  Lock,
+  ClipboardCopy,
   Music2,
+  PenLine,
   Plus,
   RefreshCw,
   Sparkles,
@@ -16,16 +17,14 @@ import {
   AI_ETHICS_QUESTION,
   EMPTY_SONG,
   JUDGMENT_LABELS,
-  fetchAiStatus,
+  buildAiPrompt,
   fetchMyAiActivity,
   judgmentItems,
-  requestAiAnalysis,
   saveAiActivity,
   type AiActivity,
   type AiCriterion,
   type AiResult,
   type AiSong,
-  type AiStatus,
   type Judgment,
 } from '../lib/aiApi.ts';
 import type { StudentProfile } from '../types.ts';
@@ -34,6 +33,45 @@ import { FourPStrip } from './LessonGuide.tsx';
 const DRAFT_KEY = 'music_era_stage4_ai_draft_v1';
 const CREDS_KEY = 'music_era_stage4_ai_creds_v1';
 const MAX_SONGS = 3;
+
+interface TypeRow {
+  name: string;
+  desire: string;
+  worry: string;
+}
+
+const EMPTY_TYPES: TypeRow[] = [0, 1, 2, 3].map(() => ({ name: '', desire: '', worry: '' }));
+
+function splitWords(text: string, max: number): string[] {
+  return text
+    .split(/[,，、·\n]/)
+    .map((w) => w.trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+
+// 학생이 정리한 항목으로 결과 묶기
+function buildResult(d: Draft): AiResult | null {
+  if (!d.criterion || !d.aiMode) return null;
+  const meta = {
+    source: d.aiMode,
+    tool: d.aiMode === 'ai' ? d.aiTool.trim() : '',
+    rawText: d.aiMode === 'ai' ? d.aiRawText.trim() : '',
+    summary: d.summaryText.trim(),
+    limits: '',
+  };
+  if (d.criterion === 'lyrics') {
+    const emotionWords = splitWords(d.emotionText, 8).map((word) => ({ word, count: 0, example: '' }));
+    const themeKeywords = splitWords(d.themeText, 5).map((keyword) => ({ keyword, reason: '' }));
+    if (emotionWords.length === 0 && themeKeywords.length === 0) return null;
+    return { kind: 'lyrics', emotionWords, themeKeywords, ...meta };
+  }
+  const types = d.types
+    .filter((t) => t.name.trim())
+    .map((t) => ({ name: t.name.trim(), desire: t.desire.trim(), worry: t.worry.trim(), evidence: '' }));
+  if (types.length === 0) return null;
+  return { kind: 'music', types, ...meta };
+}
 
 interface Draft {
   step: number;
@@ -44,6 +82,13 @@ interface Draft {
   hypothesis: string;
   criterion: AiCriterion | '';
   aiResult: AiResult | null;
+  aiMode: '' | 'ai' | 'self';
+  aiTool: string;
+  aiRawText: string;
+  emotionText: string;
+  themeText: string;
+  types: TypeRow[];
+  summaryText: string;
   judgments: Record<string, Judgment>;
   comparisonText: string;
   reconstructionText: string;
@@ -60,6 +105,13 @@ const EMPTY_DRAFT: Draft = {
   hypothesis: '',
   criterion: '',
   aiResult: null,
+  aiMode: '',
+  aiTool: '',
+  aiRawText: '',
+  emotionText: '',
+  themeText: '',
+  types: EMPTY_TYPES,
+  summaryText: '',
   judgments: {},
   comparisonText: '',
   reconstructionText: '',
@@ -88,7 +140,7 @@ function writeJson(key: string, value: unknown) {
 const STEPS = [
   { n: 1, tag: 'H', title: '나의 가설 먼저', who: '학생이 먼저' },
   { n: 2, tag: 'A', title: '분석 기준 고르기', who: 'AI가 돕기 ①' },
-  { n: 3, tag: 'A', title: 'AI 분석 받기', who: 'AI가 돕기 ②' },
+  { n: 3, tag: 'A', title: 'AI 도움(필요할 때) · 정리', who: 'AI가 돕기 ②' },
   { n: 4, tag: 'H', title: '비교하고 재구성', who: '학생이 판단' },
 ] as const;
 
@@ -104,8 +156,7 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
   const [draft, setDraft] = useState<Draft>(() => ({ ...EMPTY_DRAFT, ...(readJson<Draft>(DRAFT_KEY) ?? {}) }));
   const [creds, setCreds] = useState<{ id: string; token: string } | null>(() => readJson(CREDS_KEY));
   const [saved, setSaved] = useState<AiActivity | null>(null);
-  const [status, setStatus] = useState<AiStatus | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -114,7 +165,6 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
   }, [draft]);
 
   useEffect(() => {
-    fetchAiStatus().then(setStatus);
     if (creds) {
       fetchMyAiActivity(creds.id, creds.token).then((a) => {
         if (a) {
@@ -139,30 +189,36 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
 
   const filledSongs = draft.songs.filter((s) => s.title.trim());
   const step1Ready = filledSongs.length > 0 && draft.hypothesis.trim().length >= 5;
-  const step3InputsReady =
-    draft.criterion === 'lyrics'
-      ? filledSongs.every((s) => s.lyrics.trim())
-      : filledSongs.every((s) => s.tempo.trim() || s.mood.trim() || s.instruments.trim() || s.lyricsContent.trim());
+  const musicInputsReady = filledSongs.every(
+    (s) => s.tempo.trim() || s.mood.trim() || s.instruments.trim() || s.lyricsContent.trim(),
+  );
+  const builtResult = buildResult(draft);
+  const step3Ready =
+    Boolean(builtResult) &&
+    (draft.criterion !== 'music' || musicInputsReady) &&
+    (draft.aiMode !== 'ai' || draft.aiRawText.trim().length >= 10);
   const step4Ready = draft.comparisonText.trim() && draft.reconstructionText.trim();
   const items = useMemo(() => judgmentItems(draft.aiResult), [draft.aiResult]);
+  const prompt = draft.criterion ? buildAiPrompt(draft.criterion, filledSongs) : '';
 
-  const runAnalysis = async () => {
-    if (!draft.criterion) return;
-    setAnalyzing(true);
-    setError('');
+  const copyPrompt = async () => {
     try {
-      const result = await requestAiAnalysis({
-        criterion: draft.criterion,
-        hypothesis: draft.hypothesis.trim(),
-        songs: filledSongs,
-      });
-      update({ aiResult: result, judgments: {} });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI 분석을 받지 못했어요.');
-      fetchAiStatus().then(setStatus);
-    } finally {
-      setAnalyzing(false);
+      await navigator.clipboard.writeText(prompt);
+    } catch {
+      const ta = document.getElementById('ai-prompt') as HTMLTextAreaElement | null;
+      ta?.select();
+      document.execCommand('copy');
     }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2500);
+  };
+
+  const finishStep3 = () => {
+    const result = buildResult(draft);
+    if (!result) return;
+    const same = JSON.stringify(result) === JSON.stringify(draft.aiResult);
+    update({ aiResult: result, judgments: same ? draft.judgments : {} });
+    goStep(4);
   };
 
   const save = async () => {
@@ -220,7 +276,7 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
         </h1>
         <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600">
           <strong className="text-slate-900">H(나) → A(AI) → H(나)</strong> 순서로 진행해요. AI는 정답을 주는 게 아니라
-          생각할 재료를 주는 도우미예요. 마지막 판단과 문장은 언제나 내가 씁니다.
+          생각할 재료를 주는 도우미예요. AI는 꼭 필요할 때만, 각자 자기 계정의 AI 도구로 써요. 마지막 판단과 문장은 언제나 내가 씁니다.
         </p>
       </section>
 
@@ -262,12 +318,6 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
           );
         })}
       </ol>
-
-      {status && !status.connected && (
-        <Notice tone="amber">
-          저장 준비 중이에요. 데이터 저장소(/api)와 연결되면 AI 분석과 저장을 할 수 있어요.
-        </Notice>
-      )}
 
       {error && (
         <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -327,13 +377,13 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
 
       {/* ---------- 2단계: A-1 기준 고르기 ---------- */}
       {draft.step === 2 && (
-        <Card tag="A" title="2단계 · 무엇을 기준으로 분석할까요?" sub="둘 중 하나를 골라요. 기준에 따라 AI가 도와주는 방식이 달라져요.">
+        <Card tag="A" title="2단계 · 무엇을 기준으로 분석할까요?" sub="둘 중 하나를 골라요. 기준에 따라 분석하는 방법이 달라져요.">
           <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="분석 기준">
             <CriterionCard
               selected={draft.criterion === 'lyrics'}
               title="가사 측면"
               desc="가사를 분석해서 자주 등장하는 감정 단어와 핵심 주제 키워드를 뽑아요."
-              need="필요한 것: 각 곡의 가사"
+              need="필요한 것: 각 곡의 가사(앱에는 넣지 않고 AI 도구에만 붙여 넣어요)"
               onSelect={() => update({ criterion: 'lyrics', aiResult: draft.criterion === 'lyrics' ? draft.aiResult : null, judgments: {} })}
             />
             <CriterionCard
@@ -346,36 +396,29 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
           </div>
           <StepNav
             back={() => goStep(1)}
-            next={{ label: '다음: 자료 넣고 AI 분석 받기', disabled: !draft.criterion, onClick: () => goStep(3) }}
+            next={{ label: '다음: 분석하기', disabled: !draft.criterion, onClick: () => goStep(3) }}
           />
         </Card>
       )}
 
-      {/* ---------- 3단계: A-2 AI 분석 ---------- */}
+      {/* ---------- 3단계: A-2 (필요할 때) AI 도움 받고 정리 ---------- */}
       {draft.step === 3 && draft.criterion && (
         <Card
           tag="A"
-          title={draft.criterion === 'lyrics' ? '3단계 · 가사 넣고 감정 단어·주제 키워드 뽑기' : '3단계 · 음악적 특징 적고 욕망·고민 유형 나누기'}
-          sub={draft.criterion === 'lyrics' ? '가사는 분석에만 쓰이고 저장되지 않아요.' : '직접 들으며 느낀 대로 적어요. 내가 적은 내용이 AI 분석의 재료가 돼요.'}
+          title={draft.criterion === 'lyrics' ? '3단계 · 감정 단어와 주제 키워드 찾기' : '3단계 · 욕망과 고민의 유형 나누기'}
+          sub="AI 도움이 필요하면 내 AI 도구로 물어보고, 아니면 직접 분석해요."
         >
-          <Notice tone="slate">
-            개인정보(이름, 학교, 연락처)는 어떤 칸에도 적지 마세요. AI 결과에는 틀린 내용이 있을 수 있어요.
-          </Notice>
-
-          <div className="mt-5 space-y-5">
-            {filledSongs.map((song) => {
-              const i = draft.songs.indexOf(song);
-              return (
-                <div key={i} className="rounded-xl border border-slate-200 p-4">
-                  <p className="text-sm font-semibold text-slate-900">
-                    {song.title}
-                    {song.artist && <span className="font-normal text-slate-500"> · {song.artist}</span>}
-                  </p>
-                  {draft.criterion === 'lyrics' ? (
-                    <textarea className={`${inputCls} mt-3 min-h-[160px]`} value={song.lyrics} maxLength={2500}
-                      aria-label={`${song.title} 가사`} placeholder="가사를 붙여 넣으세요 (최대 2,500자)"
-                      onChange={(e) => updateSong(i, { lyrics: e.target.value })} />
-                  ) : (
+          {draft.criterion === 'music' && (
+            <div className="mb-6 space-y-4">
+              <p className={labelCls}>① 곡을 들으며 음악적 특징을 적어요 <span className="text-red-700">*</span></p>
+              {filledSongs.map((song) => {
+                const i = draft.songs.indexOf(song);
+                return (
+                  <div key={i} className="rounded-xl border border-slate-200 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      {song.title}
+                      {song.artist && <span className="font-normal text-slate-500"> · {song.artist}</span>}
+                    </p>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <Field label="템포(빠르기)">
                         <input className={inputCls} value={song.tempo} maxLength={80} placeholder="예: 빠르고 통통 튐"
@@ -394,41 +437,116 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
                           onChange={(e) => updateSong(i, { lyricsContent: e.target.value })} />
                       </Field>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <p className={labelCls}>
+            {draft.criterion === 'music' ? '②' : '①'} AI 도움이 필요한가요?
+          </p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="AI 사용 여부">
+            <ModeCard selected={draft.aiMode === 'ai'} icon={<Bot className="h-5 w-5" aria-hidden="true" />}
+              title="AI 도움 받기"
+              desc="앱이 만든 질문을 복사해 내 AI 도구에 묻고, 받은 답을 붙여 넣어요."
+              onSelect={() => update({ aiMode: 'ai' })} />
+            <ModeCard selected={draft.aiMode === 'self'} icon={<PenLine className="h-5 w-5" aria-hidden="true" />}
+              title="AI 없이 내가 분석하기"
+              desc={draft.criterion === 'lyrics' ? '가사를 직접 읽으며 감정 단어와 주제를 찾아요.' : '내가 적은 특징을 보며 유형을 직접 나눠요.'}
+              onSelect={() => update({ aiMode: 'self' })} />
           </div>
 
-          <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-            {status && status.connected && !status.enabled ? (
-              <p className="flex items-center gap-2 text-sm text-slate-700">
-                <Lock className="h-4 w-4 shrink-0" aria-hidden="true" />
-                선생님이 AI 분석을 열면 버튼을 누를 수 있어요.
-                <button type="button" className="ml-auto text-xs underline underline-offset-4"
-                  onClick={() => fetchAiStatus().then(setStatus)}>다시 확인</button>
-              </p>
-            ) : (
-              <div className="flex flex-wrap items-center gap-3">
-                <button type="button" className={primaryBtn} disabled={!step3InputsReady || analyzing || !status?.connected}
-                  onClick={runAnalysis}>
-                  {analyzing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
-                  {analyzing ? 'AI가 분석하는 중...' : draft.aiResult ? '다시 분석 받기' : 'AI에게 분석 요청하기'}
-                </button>
-                {!step3InputsReady && (
-                  <span className="text-xs text-slate-500">
-                    {draft.criterion === 'lyrics' ? '모든 곡의 가사를 넣어 주세요.' : '곡마다 하나 이상의 칸을 적어 주세요.'}
-                  </span>
+          {draft.aiMode === 'ai' && (
+            <div className="mt-6 space-y-5">
+              <Notice tone="amber">
+                학교에서 허용한 AI 도구를 <strong>내 계정</strong>으로 써요. 이용 연령과 보호자 동의를 확인하고, 이름·학교 같은 개인정보는 넣지 마세요.
+                AI 답에는 틀린 내용이 있을 수 있어요.
+              </Notice>
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className={labelCls}>AI에게 보낼 질문 (복사해서 내 AI 도구에 붙여 넣기)</p>
+                  <button type="button" className={ghostBtn} onClick={copyPrompt}>
+                    {copied ? <CheckCircle2 className="h-4 w-4 text-teal-700" aria-hidden="true" /> : <ClipboardCopy className="h-4 w-4" aria-hidden="true" />}
+                    {copied ? '복사했어요' : '질문 복사하기'}
+                  </button>
+                </div>
+                <textarea id="ai-prompt" readOnly value={prompt}
+                  className={`${inputCls} mt-2 min-h-[180px] bg-slate-50 font-mono text-xs leading-relaxed`} />
+                {draft.criterion === 'lyrics' && (
+                  <p className="mt-1 text-xs text-slate-500">AI 도구에서 맨 아래 「(여기에 가사를 붙여 넣으세요)」 자리에 가사를 붙여 넣어 보내세요. 가사는 이 앱에 넣지 않아요.</p>
                 )}
               </div>
-            )}
-          </div>
+              <div className="grid gap-4 sm:grid-cols-[14rem_1fr]">
+                <Field label="사용한 AI 도구" hint="출처 밝히기">
+                  <input className={inputCls} maxLength={40} value={draft.aiTool} placeholder="예: 학교에서 쓰는 AI 도구 이름"
+                    onChange={(e) => update({ aiTool: e.target.value })} />
+                </Field>
+                <Field label="AI 답변 붙여 넣기" required>
+                  <textarea className={`${inputCls} min-h-[140px]`} maxLength={4000} value={draft.aiRawText}
+                    placeholder="AI가 준 답을 그대로 붙여 넣어요."
+                    onChange={(e) => update({ aiRawText: e.target.value })} />
+                </Field>
+              </div>
+            </div>
+          )}
 
-          {draft.aiResult && <AiResultView result={draft.aiResult} />}
+          {draft.aiMode && (
+            <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
+              <p className="text-sm font-semibold text-slate-900">
+                {draft.aiMode === 'ai' ? 'AI 답에서 핵심만 골라 정리해요' : '내가 찾은 결과를 정리해요'}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">다음 단계에서 이 항목들을 하나씩 따져 봐요.</p>
+              {draft.criterion === 'lyrics' ? (
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <Field label="자주 등장하는 감정 단어" required hint="쉼표(,)로 구분 · 최대 8개">
+                    <input className={inputCls} maxLength={200} value={draft.emotionText} placeholder="예: 불안, 설렘, 외로움"
+                      onChange={(e) => update({ emotionText: e.target.value })} />
+                  </Field>
+                  <Field label="핵심 주제 키워드" hint="쉼표(,)로 구분 · 최대 5개">
+                    <input className={inputCls} maxLength={200} value={draft.themeText} placeholder="예: 자기다움, 비교, 성장"
+                      onChange={(e) => update({ themeText: e.target.value })} />
+                  </Field>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs text-slate-500">욕망과 고민의 유형 3~4가지</p>
+                  {draft.types.map((t, ti) => (
+                    <div key={ti} className="grid gap-2 sm:grid-cols-[10rem_1fr_1fr]">
+                      <input className={inputCls} maxLength={40} value={t.name} placeholder={`유형 ${ti + 1} 이름`} aria-label={`유형 ${ti + 1} 이름`}
+                        onChange={(e) => update({ types: draft.types.map((x, xi) => (xi === ti ? { ...x, name: e.target.value } : x)) })} />
+                      <input className={inputCls} maxLength={200} value={t.desire} placeholder="바라는 것(욕망)" aria-label={`유형 ${ti + 1} 욕망`}
+                        onChange={(e) => update({ types: draft.types.map((x, xi) => (xi === ti ? { ...x, desire: e.target.value } : x)) })} />
+                      <input className={inputCls} maxLength={200} value={t.worry} placeholder="고민" aria-label={`유형 ${ti + 1} 고민`}
+                        onChange={(e) => update({ types: draft.types.map((x, xi) => (xi === ti ? { ...x, worry: e.target.value } : x)) })} />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-4">
+                <Field label="한두 문장 요약" hint="선택">
+                  <input className={inputCls} maxLength={400} value={draft.summaryText}
+                    placeholder={draft.criterion === 'lyrics' ? '예: 가사에는 남과 비교하지 않고 나답게 살고 싶은 마음이 많이 보인다.' : '예: 인정받고 싶은 마음과 지친 마음이 함께 보인다.'}
+                    onChange={(e) => update({ summaryText: e.target.value })} />
+                </Field>
+              </div>
+            </div>
+          )}
 
           <StepNav
             back={() => goStep(2)}
-            next={{ label: '다음: 내 느낌과 비교하기', disabled: !draft.aiResult, onClick: () => goStep(4) }}
+            next={{ label: '다음: 내 느낌과 비교하기', disabled: !step3Ready, onClick: finishStep3 }}
+            hint={
+              !draft.aiMode
+                ? 'AI 도움을 받을지 먼저 골라 주세요.'
+                : draft.criterion === 'music' && !musicInputsReady
+                  ? '곡마다 음악적 특징을 하나 이상 적어 주세요.'
+                  : draft.aiMode === 'ai' && draft.aiRawText.trim().length < 10
+                    ? 'AI 답변을 붙여 넣어 주세요.'
+                    : !builtResult
+                      ? draft.criterion === 'lyrics' ? '감정 단어나 키워드를 적어 주세요.' : '유형을 하나 이상 적어 주세요.'
+                      : ''
+            }
           />
         </Card>
       )}
@@ -442,7 +560,7 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
           </div>
 
           <div className="mt-5">
-            <p className={labelCls}>① AI가 뽑은 항목마다 내 판단을 골라요</p>
+            <p className={labelCls}>① {draft.aiResult.source === 'self' ? '내가 찾은 항목을 모둠 친구 생각과 견주어' : 'AI가 뽑은 항목마다'} 내 판단을 골라요</p>
             <ul className="mt-2 divide-y divide-slate-200 rounded-xl border border-slate-200">
               {items.map((item) => (
                 <li key={item.key} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
@@ -476,7 +594,7 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
           </div>
 
           <div className="mt-5 space-y-5">
-            <Field label="② AI 결과와 내가 실제로 느끼는 감정 비교하기" required
+            <Field label={draft.aiResult.source === 'self' ? '② 내 분석과 처음 가설·친구들의 생각 비교하기' : '② AI 결과와 내가 실제로 느끼는 감정 비교하기'} required
               hint="무엇이 맞고 무엇이 다른가요? 모둠 대화에서 고친 점, 처음 가설과 달라진 점도 적어요.">
               <textarea className={`${inputCls} min-h-[110px]`} value={draft.comparisonText} maxLength={1500}
                 placeholder="예: AI는 '불안'을 가장 많이 뽑았지만, 나는 이 노래를 들으면 불안보다 '버티는 힘'이 더 느껴진다. 모둠 친구들도..."
@@ -518,7 +636,10 @@ export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
           <dl className="space-y-4 text-sm">
             <Summary label="곡">{saved.songs.map((s) => `${s.title}${s.artist ? ` - ${s.artist}` : ''}`).join(', ')}</Summary>
             <Summary label="나의 가설">{saved.hypothesis}</Summary>
-            <Summary label="분석 기준">{saved.criterion === 'lyrics' ? '가사 측면' : '음악적 특징 측면'}</Summary>
+            <Summary label="분석 기준">
+              {saved.criterion === 'lyrics' ? '가사 측면' : '음악적 특징 측면'} ·{' '}
+              {saved.aiResult?.source === 'self' ? 'AI 없이 직접 분석' : `AI 도움${saved.aiResult?.tool ? `(${saved.aiResult.tool})` : ''}`}
+            </Summary>
             <Summary label="AI 결과와 내 느낌 비교">{saved.comparisonText}</Summary>
             <Summary label="나만의 언어로 재구성">{saved.reconstructionText}</Summary>
             {saved.evidenceText && <Summary label="대표 악기 소리·노랫말 구절">{saved.evidenceText}</Summary>}
@@ -662,11 +783,28 @@ function CriterionCard({
   );
 }
 
+function ModeCard({ selected, icon, title, desc, onSelect }: { selected: boolean; icon: React.ReactNode; title: string; desc: string; onSelect: () => void }) {
+  return (
+    <button type="button" role="radio" aria-checked={selected} onClick={onSelect}
+      className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-colors ${
+        selected ? 'border-slate-900 bg-slate-50 ring-2 ring-slate-900/15' : 'border-slate-200 bg-white hover:bg-slate-50'
+      }`}>
+      <span className={`mt-0.5 ${selected ? 'text-slate-900' : 'text-slate-400'}`}>{icon}</span>
+      <span>
+        <span className="block text-base font-semibold text-slate-900">{title}</span>
+        <span className="mt-1 block text-sm leading-relaxed text-slate-600">{desc}</span>
+      </span>
+    </button>
+  );
+}
+
 export function AiResultView({ result }: { result: AiResult }) {
   return (
     <div className="mt-6 rounded-xl border border-teal-200 bg-teal-50/60 p-4 sm:p-5">
       <p className="flex items-center gap-2 text-sm font-semibold text-teal-900">
-        <Sparkles className="h-4 w-4" aria-hidden="true" /> AI 분석 결과 <span className="font-normal">(생각할 재료일 뿐, 정답이 아니에요)</span>
+        <Sparkles className="h-4 w-4" aria-hidden="true" />
+        {result.source === 'self' ? '내가 직접 찾은 결과' : 'AI 답에서 정리한 결과'}
+        {result.source !== 'self' && <span className="font-normal">(생각할 재료일 뿐, 정답이 아니에요)</span>}
       </p>
       {result.kind === 'lyrics' ? (
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
