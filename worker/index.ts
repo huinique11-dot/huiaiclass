@@ -350,7 +350,7 @@ function mapTeacherResponseRow(row: ResponseRow) {
 function mapPublicResponseRow(row: ResponseRow) {
   return {
     id: row.id,
-    studentId: row.student_id,
+    studentId: '', // 학급 공유 화면에는 학번을 내보내지 않음(별칭만)
     studentName: row.student_name,
     classGroup: row.class_group,
     reflectionText: row.reflection_text,

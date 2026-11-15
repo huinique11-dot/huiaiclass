@@ -1,5 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Clock, Lock, MessageSquareQuote, RefreshCw } from 'lucide-react';
+import { PostItBoard, noteColor, type BoardCluster } from './PostItBoard.tsx';
+import { lessonEras } from './StudentActivityView.tsx';
+
+type GroupBy = 'all' | 'era' | 'song';
+const NO_ERA = '시대 미선택';
 import type { StorageMode } from '../lib/classroomApi.ts';
 import type { LessonConfig, StudentResponse } from '../types.ts';
 
@@ -12,18 +17,6 @@ interface ClassGalleryViewProps {
   onGoToWrite: () => void;
 }
 
-function formatTime(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat('ko-KR', {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(new Date(iso));
-  } catch {
-    return '';
-  }
-}
 
 export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
   lesson,
@@ -34,6 +27,7 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
   onGoToWrite,
 }) => {
   const [groupFilter, setGroupFilter] = useState<string>('전체');
+  const [groupBy, setGroupBy] = useState<GroupBy>('era');
 
   const groups = useMemo(() => {
     const set = new Set<string>();
@@ -49,6 +43,33 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
     if (groupFilter === '전체') return responses;
     return responses.filter((r) => r.classGroup.trim() === groupFilter);
   }, [responses, groupFilter]);
+
+  // 시대 순서(교사가 정한 순서)와 색
+  const eraOrder = useMemo(() => lessonEras(lesson).map((e) => e.title), [lesson]);
+  const eraIndex = (title: string) => {
+    const i = eraOrder.indexOf(title);
+    return i === -1 ? eraOrder.length + (title ? 1 : 2) : i;
+  };
+  const colorOf = (r: StudentResponse) => noteColor(eraIndex(r.eraTitle ?? ''));
+
+  const clusters: BoardCluster[] = useMemo(() => {
+    const sorted = [...filtered].sort(
+      (a, b) => eraIndex(a.eraTitle ?? '') - eraIndex(b.eraTitle ?? '') || (a.songTitle ?? '').localeCompare(b.songTitle ?? ''),
+    );
+    if (groupBy === 'all') return [{ key: 'all', title: '우리 반 감상 포스트잇', items: sorted }];
+    const map = new Map<string, BoardCluster>();
+    for (const r of sorted) {
+      const era = r.eraTitle?.trim() || NO_ERA;
+      const song = r.songTitle?.trim() || '감상곡 미선택';
+      const key = groupBy === 'era' ? era : `${era}__${song}`;
+      if (!map.has(key)) {
+        map.set(key, groupBy === 'era' ? { key, title: era, items: [] } : { key, title: `♪ ${song}`, subtitle: era, items: [] });
+      }
+      map.get(key)!.items.push(r);
+    }
+    return [...map.values()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, groupBy, eraOrder]);
 
   if (!lesson.shareWithClass) {
     return (
@@ -110,6 +131,28 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
         </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="모아 보기 방식">
+        <span className="mr-1 text-xs font-semibold text-slate-500">모아 보기</span>
+        {([
+          ['era', '같은 시대끼리'],
+          ['song', '같은 감상곡끼리'],
+          ['all', '한꺼번에'],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="radio"
+            aria-checked={groupBy === key}
+            onClick={() => setGroupBy(key)}
+            className={`min-h-[40px] rounded-full px-4 text-sm font-medium transition-colors ${
+              groupBy === key ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {groups.length > 1 && (
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="반 또는 모둠 필터">
           {groups.map((grp) => (
@@ -144,59 +187,7 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-          {filtered.map((item) => {
-            const isMine = item.id === myResponseId;
-            return (
-              <article
-                key={item.id}
-                className={`flex flex-col justify-between rounded-xl border bg-white p-5 sm:p-6 ${
-                  isMine ? 'border-slate-900' : 'border-slate-200'
-                }`}
-              >
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {item.studentId && (
-                        <span className="font-mono tabular-nums text-slate-600">{item.studentId}</span>
-                      )}
-                      <span className="font-semibold text-slate-900">{item.studentName}</span>
-                      {item.classGroup && (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span>{item.classGroup}</span>
-                        </>
-                      )}
-                      {isMine && (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-medium text-teal-700">내가 쓴 글</span>
-                        </>
-                      )}
-                    </div>
-                    <span className="font-mono tabular-nums">{formatTime(item.updatedAt)}</span>
-                  </div>
-
-                  {(item.eraTitle || item.songTitle) && (
-                    <p className="mt-3 inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">
-                      {[item.eraTitle, item.songTitle].filter(Boolean).join(' · ')}
-                    </p>
-                  )}
-                  <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-800">
-                    {item.reflectionText}
-                  </p>
-                </div>
-
-                {item.presentConnection && (
-                  <div className="mt-5 border-t border-slate-200 pt-3.5">
-                    <p className="text-xs font-medium text-slate-500">지금 시대에 대한 한 줄</p>
-                    <p className="mt-1 text-sm text-slate-700">{item.presentConnection}</p>
-                  </div>
-                )}
-              </article>
-            );
-          })}
-        </div>
+        <PostItBoard clusters={clusters} colorOf={colorOf} myResponseId={myResponseId} />
       )}
     </div>
   );
