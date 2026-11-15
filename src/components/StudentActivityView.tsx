@@ -12,6 +12,7 @@ import {
 import { submitStudentResponse, type StorageMode } from '../lib/classroomApi.ts';
 import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
 import type { LessonConfig, StudentResponse } from '../types.ts';
+import { ArtworkGallery } from './ArtworkGallery.tsx';
 
 interface StudentActivityViewProps {
   lesson: LessonConfig;
@@ -293,13 +294,25 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                 <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>함께 보는 미술 · 시각 자료</span>
               </div>
-              <p
-                className={`mt-1.5 whitespace-pre-line text-sm leading-relaxed ${
-                  needsSetup(lesson.artworkNote) ? 'text-amber-800' : 'text-slate-700'
-                }`}
-              >
-                {lesson.artworkNote}
-              </p>
+
+              {lesson.artworks.length > 0 ? (
+                <div className="mt-3 space-y-3">
+                  {lesson.artworkNote.trim() && !needsSetup(lesson.artworkNote) && (
+                    <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">
+                      {lesson.artworkNote}
+                    </p>
+                  )}
+                  <ArtworkGallery artworks={lesson.artworks} />
+                </div>
+              ) : (
+                <p
+                  className={`mt-1.5 whitespace-pre-line text-sm leading-relaxed ${
+                    needsSetup(lesson.artworkNote) ? 'text-amber-800' : 'text-slate-700'
+                  }`}
+                >
+                  {lesson.artworkNote}
+                </p>
+              )}
             </div>
           </div>
         </aside>

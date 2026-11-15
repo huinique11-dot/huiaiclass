@@ -38,6 +38,20 @@ interface LessonRow {
   updated_at: string;
 }
 
+interface ArtworkRow {
+  slot_index: number;
+  title: string;
+  image_url: string;
+  description: string;
+}
+
+interface ArtworkInput {
+  slotIndex: number;
+  title: string;
+  imageUrl: string;
+  description: string;
+}
+
 interface ResponseRow {
   id: string;
   student_id: string;
@@ -60,6 +74,7 @@ const DEFAULT_LESSON = {
   historicalContext:
     '[확인 필요] 탐구할 시대의 역사적 배경과 당시 사람들의 삶의 상황을 입력해 주세요. (수업설계안 원문에는 구체적인 시대와 곡명이 명시되어 있지 않습니다.)',
   artworkNote: '[확인 필요] 함께 살펴볼 대표 미술작품이나 시각 자료 안내를 입력해 주세요.',
+  artworks: [] as ArtworkInput[],
   empathyPrompt:
     '당시 시대 상황에 자신을 대입하여 음악을 감상하고, 그 시대 사람들의 마음과 욕망에 공감하며 느낀 개인의 감성을 문장으로 표현해 봅시다.',
   shareWithClass: true,
@@ -102,13 +117,63 @@ function sanitizeHttpUrl(raw: unknown): { valid: boolean; value: string } {
   }
 }
 
-function mapLessonRow(row: LessonRow) {
+function sanitizeArtworkImageUrl(raw: unknown): { valid: boolean; value: string } {
+  if (typeof raw !== 'string') return { valid: true, value: '' };
+  const trimmed = raw.trim();
+  if (!trimmed) return { valid: true, value: '' };
+  if (/^data:image\/(jpeg|jpg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(trimmed)) {
+    if (trimmed.length > 450000) return { valid: false, value: '' };
+    return { valid: true, value: trimmed };
+  }
+  if (trimmed.length > 1000) return { valid: false, value: '' };
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return { valid: true, value: parsed.toString() };
+    }
+    return { valid: false, value: '' };
+  } catch {
+    return { valid: false, value: '' };
+  }
+}
+
+async function ensureLessonArtworksTable(db: D1Database): Promise<void> {
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS lesson_artworks (slot_index INTEGER PRIMARY KEY CHECK (slot_index >= 0 AND slot_index <= 3), title TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)",
+    )
+    .run();
+}
+
+async function readLessonArtworks(db: D1Database): Promise<ArtworkInput[]> {
+  try {
+    const res = await db
+      .prepare('SELECT slot_index, title, image_url, description FROM lesson_artworks ORDER BY slot_index ASC')
+      .all<ArtworkRow>();
+    return (res.results ?? []).map((row) => ({
+      slotIndex: row.slot_index,
+      title: row.title,
+      imageUrl: row.image_url,
+      description: row.description,
+    }));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('no such table')) {
+      await ensureLessonArtworksTable(db);
+      return [];
+    }
+    throw err;
+  }
+}
+
+function mapLessonRow(row: LessonRow, artworks: ArtworkInput[]) {
   return {
     eraTitle: row.era_title,
     songTitle: row.song_title,
     audioOrLinkUrl: row.audio_or_link_url,
     historicalContext: row.historical_context,
     artworkNote: row.artwork_note,
+    artworks,
     empathyPrompt: row.empathy_prompt,
     shareWithClass: row.share_with_class === 1,
     isCustomized: row.is_customized === 1,
@@ -320,10 +385,13 @@ export default {
 
       // Lesson configuration (public read, teacher-only write)
       if (pathname === '/api/lesson' && request.method === 'GET') {
-        const row = await env.DB.prepare(
-          'SELECT id, era_title, song_title, audio_or_link_url, historical_context, artwork_note, empathy_prompt, share_with_class, is_customized, updated_at FROM lesson_settings WHERE id = 1',
-        ).first<LessonRow>();
-        return jsonResponse(row ? mapLessonRow(row) : DEFAULT_LESSON);
+        const [row, artworks] = await Promise.all([
+          env.DB.prepare(
+            'SELECT id, era_title, song_title, audio_or_link_url, historical_context, artwork_note, empathy_prompt, share_with_class, is_customized, updated_at FROM lesson_settings WHERE id = 1',
+          ).first<LessonRow>(),
+          readLessonArtworks(env.DB),
+        ]);
+        return jsonResponse(row ? mapLessonRow(row, artworks) : { ...DEFAULT_LESSON, artworks });
       }
 
       if (pathname === '/api/lesson' && request.method === 'PUT') {
@@ -343,14 +411,53 @@ export default {
         const empathyPrompt = cleanText(body.empathyPrompt, 600);
         const shareWithClass = body.shareWithClass === true ? 1 : 0;
 
-        if (!eraTitle || !songTitle || !historicalContext || !artworkNote || !empathyPrompt) {
+        if (!eraTitle || !songTitle || !historicalContext || !empathyPrompt) {
           return jsonResponse({ error: '필수 수업 안내 항목을 모두 입력해 주세요.' }, 400);
         }
         if (!urlCheck.valid) {
           return jsonResponse({ error: '링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.' }, 400);
         }
 
+        const rawArtworks = Array.isArray(body.artworks) ? body.artworks : [];
+        const sanitizedArtworks: ArtworkInput[] = [];
+        const usedSlots = new Set<number>();
+
+        for (let i = 0; i < Math.min(rawArtworks.length, 4); i++) {
+          const item = rawArtworks[i];
+          if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+          const record = item as Record<string, unknown>;
+          const slotIndex =
+            typeof record.slotIndex === 'number' &&
+            Number.isInteger(record.slotIndex) &&
+            record.slotIndex >= 0 &&
+            record.slotIndex <= 3
+              ? record.slotIndex
+              : i;
+          if (usedSlots.has(slotIndex)) continue;
+          usedSlots.add(slotIndex);
+
+          const title = cleanText(record.title, 120);
+          const description = cleanText(record.description, 1200);
+          const imageCheck = sanitizeArtworkImageUrl(record.imageUrl);
+          if (!imageCheck.valid) {
+            return jsonResponse(
+              { error: `시각 자료 ${slotIndex + 1}의 이미지 형식이 올바르지 않거나 용량이 너무 큽니다.` },
+              400,
+            );
+          }
+
+          if (title || imageCheck.value || description) {
+            sanitizedArtworks.push({
+              slotIndex,
+              title,
+              imageUrl: imageCheck.value,
+              description,
+            });
+          }
+        }
+
         const now = new Date().toISOString();
+        await ensureLessonArtworksTable(env.DB);
         await env.DB.prepare(
           'INSERT INTO lesson_settings (id, era_title, song_title, audio_or_link_url, historical_context, artwork_note, empathy_prompt, share_with_class, is_customized, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, 1, ?) ON CONFLICT(id) DO UPDATE SET era_title = excluded.era_title, song_title = excluded.song_title, audio_or_link_url = excluded.audio_or_link_url, historical_context = excluded.historical_context, artwork_note = excluded.artwork_note, empathy_prompt = excluded.empathy_prompt, share_with_class = excluded.share_with_class, is_customized = 1, updated_at = excluded.updated_at',
         )
@@ -366,11 +473,23 @@ export default {
           )
           .run();
 
-        const updated = await env.DB.prepare(
-          'SELECT id, era_title, song_title, audio_or_link_url, historical_context, artwork_note, empathy_prompt, share_with_class, is_customized, updated_at FROM lesson_settings WHERE id = 1',
-        ).first<LessonRow>();
+        await env.DB.prepare('DELETE FROM lesson_artworks').run();
+        for (const art of sanitizedArtworks) {
+          await env.DB.prepare(
+            'INSERT INTO lesson_artworks (slot_index, title, image_url, description, updated_at) VALUES (?, ?, ?, ?, ?)',
+          )
+            .bind(art.slotIndex, art.title, art.imageUrl, art.description, now)
+            .run();
+        }
 
-        return jsonResponse(updated ? mapLessonRow(updated) : DEFAULT_LESSON);
+        const [updated, savedArtworks] = await Promise.all([
+          env.DB.prepare(
+            'SELECT id, era_title, song_title, audio_or_link_url, historical_context, artwork_note, empathy_prompt, share_with_class, is_customized, updated_at FROM lesson_settings WHERE id = 1',
+          ).first<LessonRow>(),
+          readLessonArtworks(env.DB),
+        ]);
+
+        return jsonResponse(updated ? mapLessonRow(updated, savedArtworks) : { ...DEFAULT_LESSON, artworks: savedArtworks });
       }
 
       // Public shared gallery (only when share_with_class=1 AND response is_public=1)
