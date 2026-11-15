@@ -13,9 +13,9 @@ function seeded(seed: number) {
   };
 }
 
-export function ChristmasLights({ count = 28 }: { count?: number }) {
+export function ChristmasLights({ count = 28, top = false }: { count?: number; top?: boolean }) {
   return (
-    <div className="xmas-lights" aria-hidden="true">
+    <div className={`xmas-lights${top ? ' xmas-lights--top' : ''}`} aria-hidden="true">
       {Array.from({ length: count }, (_, i) => (
         <i
           key={i}

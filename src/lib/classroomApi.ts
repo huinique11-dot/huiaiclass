@@ -3,6 +3,7 @@ import type { LessonConfig, RubricLevel, StudentResponse, TeacherSessionState } 
 export type StorageMode = 'api-connected' | 'pending-setup';
 
 export const DEFAULT_LESSON: LessonConfig = {
+  eras: [],
   eraTitle: '[확인 필요] 탐구할 시대를 입력해 주세요',
   songTitle: '[확인 필요] 감상할 시대별 대표곡 제목과 작곡가를 입력해 주세요',
   audioOrLinkUrl: '',
@@ -141,6 +142,8 @@ export async function submitStudentResponse(payload: {
   reflectionText: string;
   presentConnection: string;
   isPublic: boolean;
+  eraTitle: string;
+  songTitle: string;
 }): Promise<{ response: StudentResponse; editToken?: string }> {
   if (payload.id && payload.editToken) {
     const res = await requestApi<StudentResponse>(`/api/my-response/${encodeURIComponent(payload.id)}`, {
@@ -153,6 +156,8 @@ export async function submitStudentResponse(payload: {
         reflectionText: payload.reflectionText,
         presentConnection: payload.presentConnection,
         isPublic: payload.isPublic,
+        eraTitle: payload.eraTitle,
+        songTitle: payload.songTitle,
       }),
     });
     if (!res.ok || !res.data) {
@@ -170,6 +175,8 @@ export async function submitStudentResponse(payload: {
       reflectionText: payload.reflectionText,
       presentConnection: payload.presentConnection,
       isPublic: payload.isPublic,
+      eraTitle: payload.eraTitle,
+      songTitle: payload.songTitle,
     }),
   });
 

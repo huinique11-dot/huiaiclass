@@ -28,12 +28,14 @@ import {
 import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
 import type {
   ArtworkItem,
+  Era,
   LessonConfig,
   RubricLevel,
   StudentResponse,
   TeacherSessionState,
 } from '../types.ts';
-import { ArtworkGallery } from './ArtworkGallery.tsx';
+import { EraEditor } from './EraEditor.tsx';
+import { lessonEras } from './StudentActivityView.tsx';
 
 interface TeacherDashboardViewProps {
   lesson: LessonConfig;
@@ -115,14 +117,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const [actionError, setActionError] = useState('');
 
   // Lesson editor state
-  const [eraTitle, setEraTitle] = useState(lesson.eraTitle);
-  const [songTitle, setSongTitle] = useState(lesson.songTitle);
-  const [audioOrLinkUrl, setAudioOrLinkUrl] = useState(lesson.audioOrLinkUrl);
-  const [historicalContext, setHistoricalContext] = useState(lesson.historicalContext);
-  const [artworkNote, setArtworkNote] = useState(lesson.artworkNote);
-  const [artworkSlots, setArtworkSlots] = useState<ArtworkItem[]>(() => buildArtworkSlots(lesson.artworks));
-  const [artworkPreviewMode, setArtworkPreviewMode] = useState(false);
-  const [brokenPreviewSlots, setBrokenPreviewSlots] = useState<Record<number, boolean>>({});
+  const [eras, setEras] = useState<Era[]>(() => lessonEras(lesson));
   const [empathyPrompt, setEmpathyPrompt] = useState(lesson.empathyPrompt);
   const [shareWithClass, setShareWithClass] = useState(lesson.shareWithClass);
   const [savingLesson, setSavingLesson] = useState(false);
@@ -130,26 +125,11 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const [lessonErrorNotice, setLessonErrorNotice] = useState('');
 
   useEffect(() => {
-    setEraTitle(lesson.eraTitle);
-    setSongTitle(lesson.songTitle);
-    setAudioOrLinkUrl(lesson.audioOrLinkUrl);
-    setHistoricalContext(lesson.historicalContext);
-    setArtworkNote(lesson.artworkNote);
-    setArtworkSlots(buildArtworkSlots(lesson.artworks));
-    setBrokenPreviewSlots({});
+    setEras(lessonEras(lesson));
     setEmpathyPrompt(lesson.empathyPrompt);
     setShareWithClass(lesson.shareWithClass);
   }, [lesson]);
 
-  const previewYouTube = parseYouTubeUrl(audioOrLinkUrl);
-  const previewValidUrl = isValidHttpUrl(audioOrLinkUrl);
-  const activeArtworksPreview = useMemo(
-    () =>
-      artworkSlots.filter(
-        (slot) => slot.title.trim() || slot.imageUrl.trim() || slot.description.trim(),
-      ),
-    [artworkSlots],
-  );
 
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, string>>({});
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
@@ -239,43 +219,34 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     }
   };
 
-  const updateArtworkSlot = (slotIndex: number, patch: Partial<ArtworkItem>) => {
-    setArtworkSlots((prev) =>
-      prev.map((slot) => (slot.slotIndex === slotIndex ? { ...slot, ...patch } : slot)),
-    );
-    if (patch.imageUrl !== undefined) {
-      setBrokenPreviewSlots((prev) => ({ ...prev, [slotIndex]: false }));
-    }
-  };
-
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingLesson(true);
     setLessonSavedNotice('');
     setLessonErrorNotice('');
     try {
-      const cleanedArtworks = artworkSlots
-        .map((slot) => ({
-          slotIndex: slot.slotIndex,
-          title: slot.title.trim(),
-          imageUrl: slot.imageUrl.trim(),
-          description: slot.description.trim(),
-        }))
-        .filter((slot) => slot.title || slot.imageUrl || slot.description);
-
-      const trimmedNote = artworkNote.trim();
-      const normalizedArtworkNote =
-        cleanedArtworks.length > 0 && trimmedNote.includes('[확인 필요]')
-          ? ''
-          : trimmedNote || (cleanedArtworks.length > 0 ? '' : lesson.artworkNote);
-
+      const cleanedEras = eras.map((e) => ({
+        ...e,
+        title: e.title.trim(),
+        historicalContext: e.historicalContext.trim(),
+        artworkNote: e.artworkNote.trim(),
+        songs: e.songs
+          .map((s) => ({ ...s, title: s.title.trim(), url: s.url.trim() }))
+          .filter((s) => s.title || s.url),
+      }));
+      const emptyName = cleanedEras.findIndex((e) => !e.title);
+      if (emptyName !== -1) {
+        throw new Error(`${emptyName + 1}번째 시대의 이름을 입력해 주세요.`);
+      }
+      const first = cleanedEras[0];
       const updated = await saveLessonConfig({
-        eraTitle: eraTitle.trim() || lesson.eraTitle,
-        songTitle: songTitle.trim() || lesson.songTitle,
-        audioOrLinkUrl: audioOrLinkUrl.trim(),
-        historicalContext: historicalContext.trim() || lesson.historicalContext,
-        artworkNote: normalizedArtworkNote,
-        artworks: cleanedArtworks,
+        eras: cleanedEras,
+        eraTitle: first?.title || lesson.eraTitle,
+        songTitle: first?.songs[0]?.title || lesson.songTitle,
+        audioOrLinkUrl: first?.songs[0]?.url ?? '',
+        historicalContext: first?.historicalContext || lesson.historicalContext,
+        artworkNote: first?.artworkNote ?? '',
+        artworks: first?.artworks ?? [],
         empathyPrompt: empathyPrompt.trim() || lesson.empathyPrompt,
         shareWithClass,
       });
@@ -320,6 +291,8 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
       '별칭(이름)',
       '반·모둠',
       '공개 여부',
+      '탐구 시대',
+      '감상곡',
       '시대 상황 대입 감성 문장',
       '지금 시대에 대한 한 줄 생각',
       '평가 단계',
@@ -333,6 +306,8 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         r.studentName,
         r.classGroup,
         r.isPublic ? '학급 공개' : '비공개',
+        r.eraTitle ?? '',
+        r.songTitle ?? '',
         r.reflectionText,
         r.presentConnection,
         r.rubricLevel || '미평가',
@@ -542,297 +517,15 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         <section className="rounded-xl border border-slate-300 bg-white p-5 sm:p-6">
           <div className="border-b border-slate-200 pb-4">
             <h2 className="text-lg font-semibold text-slate-900">
-              수업 자료 설정 — 원문 [확인 필요] 항목 채우기
+              수업 자료 설정 — 탐구 시대 · 대표 감상곡 · 시대별 자료
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-slate-500">
-              수업설계안에 적혀 있지 않은 실제 시대명, 대표곡, 역사적 배경, 미술작품 안내를 입력하면 학생 활동 화면에 반영됩니다.
+              시대를 여러 개 만들 수 있어요. 시대마다 역사적 배경과 미술·시각 자료는 공통이고, 대표 감상곡을 여러 곡 넣으면 학생이 골라 감상합니다.
             </p>
           </div>
 
           <form onSubmit={handleSaveLesson} className="mt-5 space-y-4">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div>
-                <label htmlFor="eraTitle" className="block text-xs font-medium text-slate-700">
-                  탐구 시대
-                </label>
-                <input
-                  id="eraTitle"
-                  type="text"
-                  maxLength={120}
-                  value={eraTitle}
-                  onChange={(e) => setEraTitle(e.target.value)}
-                  className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none sm:text-sm"
-                />
-              </div>
-              <div>
-                <label htmlFor="songTitle" className="block text-xs font-medium text-slate-700">
-                  시대별 대표 감상곡
-                </label>
-                <input
-                  id="songTitle"
-                  type="text"
-                  maxLength={160}
-                  value={songTitle}
-                  onChange={(e) => setSongTitle(e.target.value)}
-                  className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none sm:text-sm"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="audioOrLinkUrl" className="block text-xs font-medium text-slate-700">
-                감상곡 유튜브 · 음원 링크 (선택, https://...)
-              </label>
-              <input
-                id="audioOrLinkUrl"
-                type="url"
-                maxLength={500}
-                value={audioOrLinkUrl}
-                onChange={(e) => setAudioOrLinkUrl(e.target.value)}
-                placeholder="예: https://www.youtube.com/watch?v=... 또는 https://youtu.be/..."
-                className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-sm"
-              />
-              {previewYouTube ? (
-                <div className="mt-3 space-y-2">
-                  <p className="text-xs font-medium text-teal-800">
-                    유튜브 미리보기 확인됨 — 저장하면 학생 화면에서도 바로 재생할 수 있습니다.
-                  </p>
-                  <div className="aspect-video w-full max-w-md overflow-hidden rounded-lg bg-slate-900">
-                    <iframe
-                      src={previewYouTube.embedUrl}
-                      title="감상곡 유튜브 미리보기"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      referrerPolicy="strict-origin-when-cross-origin"
-                      allowFullScreen
-                      className="h-full w-full border-0"
-                    />
-                  </div>
-                  <a
-                    href={previewYouTube.watchUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex min-h-[40px] items-center gap-1.5 text-xs font-medium text-slate-700 underline underline-offset-4 hover:text-slate-900"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>새 창에서 유튜브 링크 확인하기</span>
-                  </a>
-                </div>
-              ) : audioOrLinkUrl.trim() ? (
-                <p className="mt-1.5 text-xs text-slate-500">
-                  {previewValidUrl
-                    ? '일반 웹 링크로 인식되었습니다. 학생 화면에는 바로가기 버튼으로 연결됩니다.'
-                    : '유튜브 주소(youtube.com 또는 youtu.be)나 https:// 로 시작하는 전체 주소를 입력해 주세요.'}
-                </p>
-              ) : null}
-            </div>
-
-            <div>
-              <label htmlFor="historicalContext" className="block text-xs font-medium text-slate-700">
-                역사적 배경과 당시 사람들의 삶
-              </label>
-              <textarea
-                id="historicalContext"
-                rows={3}
-                maxLength={2000}
-                value={historicalContext}
-                onChange={(e) => setHistoricalContext(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none sm:text-sm"
-              />
-            </div>
-
-            {/* 2x2 Artwork Gallery Editor */}
-            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    함께 보는 미술 · 시각 자료 (2×2 갤러리, 최대 4점)
-                  </h3>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    각 칸에 사진 웹 링크(https://...), 그림 제목, 작품 설명을 넣으면 학생 화면에 2×2 갤러리로 보입니다.
-                  </p>
-                </div>
-
-                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="시각 자료 편집 모드">
-                  <button
-                    type="button"
-                    onClick={() => setArtworkPreviewMode(false)}
-                    className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
-                      !artworkPreviewMode ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    2×2 링크 입력·수정
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setArtworkPreviewMode(true)}
-                    className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
-                      artworkPreviewMode ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    학생 화면 미리보기
-                  </button>
-                </div>
-              </div>
-
-              {artworkPreviewMode ? (
-                <div className="mx-auto max-w-md rounded-lg border border-slate-200 bg-white p-4">
-                  {activeArtworksPreview.length > 0 ? (
-                    <ArtworkGallery artworks={activeArtworksPreview} />
-                  ) : (
-                    <p className="py-6 text-center text-xs text-slate-500">
-                      등록된 미술·시각 자료가 아직 없습니다. ‘2×2 링크 입력·수정’에서 그림 링크를 추가해 보세요.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {artworkSlots.map((slot) => {
-                    const trimmedUrl = slot.imageUrl.trim();
-                    const isUrlValid = isValidHttpUrl(trimmedUrl);
-                    const isBroken = Boolean(brokenPreviewSlots[slot.slotIndex]);
-                    const hasAnyValue = Boolean(
-                      slot.title.trim() || trimmedUrl || slot.description.trim(),
-                    );
-
-                    return (
-                      <div
-                        key={slot.slotIndex}
-                        className="flex flex-col space-y-3 rounded-lg border border-slate-200 bg-white p-3.5"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-xs font-semibold text-slate-700">
-                            작품 {slot.slotIndex + 1}
-                          </span>
-                          {hasAnyValue && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateArtworkSlot(slot.slotIndex, {
-                                  title: '',
-                                  imageUrl: '',
-                                  description: '',
-                                })
-                              }
-                              className="min-h-[32px] rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-red-700 whitespace-nowrap"
-                            >
-                              비우기
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="aspect-[4/3] w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-                          {isUrlValid && !isBroken ? (
-                            <img
-                              src={trimmedUrl}
-                              alt={slot.title || `작품 ${slot.slotIndex + 1} 미리보기`}
-                              referrerPolicy="no-referrer"
-                              onError={() =>
-                                setBrokenPreviewSlots((prev) => ({
-                                  ...prev,
-                                  [slot.slotIndex]: true,
-                                }))
-                              }
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center text-slate-400">
-                              {isBroken ? (
-                                <>
-                                  <ImageOff className="h-6 w-6 text-amber-600" aria-hidden="true" />
-                                  <span className="text-xs leading-snug text-amber-800">
-                                    사진을 불러오지 못했습니다. 이미지 직접 주소를 확인해 주세요.
-                                  </span>
-                                </>
-                              ) : (
-                                <>
-                                  <ImageIcon className="h-6 w-6" aria-hidden="true" />
-                                  <span className="text-xs">아래에 사진 웹 링크를 넣으면 사진이 뜹니다</span>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor={`art-url-${slot.slotIndex}`}
-                            className="block text-[11px] font-medium text-slate-600"
-                          >
-                            사진 웹 링크 (https://...)
-                          </label>
-                          <input
-                            id={`art-url-${slot.slotIndex}`}
-                            type="url"
-                            maxLength={1000}
-                            value={slot.imageUrl}
-                            onChange={(e) =>
-                              updateArtworkSlot(slot.slotIndex, { imageUrl: e.target.value })
-                            }
-                            placeholder="https://... 이미지 주소를 붙여넣으세요"
-                            className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-300 px-3 py-1.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-xs"
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor={`art-title-${slot.slotIndex}`}
-                            className="block text-[11px] font-medium text-slate-600"
-                          >
-                            그림 제목 (사진 아래 표시)
-                          </label>
-                          <input
-                            id={`art-title-${slot.slotIndex}`}
-                            type="text"
-                            maxLength={120}
-                            value={slot.title}
-                            onChange={(e) =>
-                              updateArtworkSlot(slot.slotIndex, { title: e.target.value })
-                            }
-                            placeholder={`예: 작품 ${slot.slotIndex + 1} 제목과 화가`}
-                            className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-300 px-3 py-1.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-xs"
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor={`art-desc-${slot.slotIndex}`}
-                            className="block text-[11px] font-medium text-slate-600"
-                          >
-                            작품 설명 (그림을 누르면 아래에 표시)
-                          </label>
-                          <textarea
-                            id={`art-desc-${slot.slotIndex}`}
-                            rows={3}
-                            maxLength={1200}
-                            value={slot.description}
-                            onChange={(e) =>
-                              updateArtworkSlot(slot.slotIndex, { description: e.target.value })
-                            }
-                            placeholder="이 그림에 담긴 시대 상황과 감상 포인트를 적어 주세요."
-                            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-base leading-relaxed text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-xs"
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div>
-                <label htmlFor="artworkNote" className="block text-xs font-medium text-slate-700">
-                  미술 · 시각 자료 전체 안내 문구 <span className="font-normal text-slate-500">(선택)</span>
-                </label>
-                <textarea
-                  id="artworkNote"
-                  rows={2}
-                  maxLength={600}
-                  value={artworkNote}
-                  onChange={(e) => setArtworkNote(e.target.value)}
-                  placeholder="예: 네 작품을 눌러보며 음악이 만들어진 시대의 표정과 분위기를 살펴봅시다."
-                  className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-sm"
-                />
-              </div>
-            </div>
+            <EraEditor eras={eras} onChange={setEras} />
 
             <div>
               <label htmlFor="empathyPrompt" className="block text-xs font-medium text-slate-700">
@@ -994,6 +687,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                   <th className="px-4 py-3 whitespace-nowrap">별칭(이름)</th>
                   <th className="px-4 py-3 whitespace-nowrap">반·모둠</th>
                   <th className="px-4 py-3 whitespace-nowrap">공개</th>
+                  <th className="px-4 py-3 whitespace-nowrap">시대 · 감상곡</th>
                   <th className="px-4 py-3">시대 상황 대입 감성 문장</th>
                   <th className="px-4 py-3">지금 시대 한 줄</th>
                   <th className="px-4 py-3 whitespace-nowrap">평가</th>
@@ -1015,6 +709,9 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                     </td>
                     <td className="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
                       {item.isPublic ? '공개' : '비공개'}
+                    </td>
+                    <td className="max-w-[10rem] px-4 py-3.5 text-xs text-slate-600">
+                      {[item.eraTitle, item.songTitle].filter(Boolean).join(' · ') || '-'}
                     </td>
                     <td className="max-w-sm px-4 py-3.5 text-xs leading-relaxed text-slate-800 whitespace-pre-line">
                       {item.reflectionText}
@@ -1119,6 +816,11 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
 
                 <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
                   <div className="space-y-4 lg:col-span-7">
+                    {(item.eraTitle || item.songTitle) && (
+                      <p className="text-xs text-slate-500">
+                        감상: {[item.eraTitle, item.songTitle].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
                     <div>
                       <p className="text-xs font-medium text-slate-500">시대 상황 대입 감성 문장</p>
                       <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-slate-900">

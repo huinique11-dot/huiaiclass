@@ -28,6 +28,8 @@ import {
   type AiStatus,
   type Judgment,
 } from '../lib/aiApi.ts';
+import type { StudentProfile } from '../types.ts';
+import { FourPStrip } from './LessonGuide.tsx';
 
 const DRAFT_KEY = 'music_era_stage4_ai_draft_v1';
 const CREDS_KEY = 'music_era_stage4_ai_creds_v1';
@@ -98,7 +100,7 @@ const primaryBtn =
 const ghostBtn =
   'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50';
 
-export function AiAnalysisView() {
+export function AiAnalysisView({ profile }: { profile: StudentProfile }) {
   const [draft, setDraft] = useState<Draft>(() => ({ ...EMPTY_DRAFT, ...(readJson<Draft>(DRAFT_KEY) ?? {}) }));
   const [creds, setCreds] = useState<{ id: string; token: string } | null>(() => readJson(CREDS_KEY));
   const [saved, setSaved] = useState<AiActivity | null>(null);
@@ -136,8 +138,7 @@ export function AiAnalysisView() {
     update({ songs: draft.songs.map((s, idx) => (idx === i ? { ...s, ...patch } : s)) });
 
   const filledSongs = draft.songs.filter((s) => s.title.trim());
-  const step1Ready =
-    draft.studentId.trim() && draft.studentName.trim() && filledSongs.length > 0 && draft.hypothesis.trim().length >= 5;
+  const step1Ready = filledSongs.length > 0 && draft.hypothesis.trim().length >= 5;
   const step3InputsReady =
     draft.criterion === 'lyrics'
       ? filledSongs.every((s) => s.lyrics.trim())
@@ -172,9 +173,9 @@ export function AiAnalysisView() {
       const res = await saveAiActivity({
         id: creds?.id,
         editToken: creds?.token,
-        studentId: draft.studentId.trim(),
-        studentName: draft.studentName.trim(),
-        classGroup: draft.classGroup.trim(),
+        studentId: profile.studentId,
+        studentName: profile.studentName,
+        classGroup: profile.classGroup,
         songs: filledSongs,
         hypothesis: draft.hypothesis.trim(),
         criterion: draft.criterion,
@@ -223,7 +224,10 @@ export function AiAnalysisView() {
         </p>
       </section>
 
+      <FourPStrip current="P3" nowLabel="4단계 또래 음악을 AI와 함께 비교·검토하기" />
+
       {/* 진행 단계 표시 */}
+      <p className="-mb-5 text-xs font-semibold text-slate-500">이번 활동의 단계 (H-A-H)</p>
       <ol className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="활동 단계">
         {STEPS.map((s) => {
           const current = draft.step === s.n;
@@ -275,22 +279,7 @@ export function AiAnalysisView() {
       {/* ---------- 1단계: H 나의 가설 ---------- */}
       {draft.step === 1 && (
         <Card tag="H" title="1단계 · 선곡하고 나의 가설 세우기" sub="AI에게 묻기 전에, 내 생각을 먼저 적어요.">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="학번(번호)" required>
-              <input className={inputCls} value={draft.studentId} maxLength={20} placeholder="예: 20305"
-                onChange={(e) => update({ studentId: e.target.value })} />
-            </Field>
-            <Field label="별칭(이름)" required>
-              <input className={inputCls} value={draft.studentName} maxLength={30} placeholder="예: 푸른음표 (가상 별칭)"
-                onChange={(e) => update({ studentName: e.target.value })} />
-            </Field>
-            <Field label="반 또는 모둠" hint="선택">
-              <input className={inputCls} value={draft.classGroup} maxLength={40} placeholder="예: 2모둠"
-                onChange={(e) => update({ classGroup: e.target.value })} />
-            </Field>
-          </div>
-
-          <div className="mt-6">
+          <div>
             <p className={labelCls}>
               요즘 또래가 즐겨 듣는 곡 <span className="text-red-700">*</span>{' '}
               <span className="text-xs font-normal text-slate-500">(1~3곡 · 출처를 밝히기 위해 곡명과 가수를 정확히)</span>
@@ -331,7 +320,7 @@ export function AiAnalysisView() {
 
           <StepNav
             next={{ label: '다음: 분석 기준 고르기', disabled: !step1Ready, onClick: () => goStep(2) }}
-            hint={!step1Ready ? '학번, 별칭, 곡 1개 이상, 가설 한 줄을 적으면 다음으로 갈 수 있어요.' : ''}
+            hint={!step1Ready ? '곡 1개 이상과 가설 한 줄을 적으면 다음으로 갈 수 있어요.' : ''}
           />
         </Card>
       )}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ClipboardCheck, Headphones, LogOut, Sparkles, UserRound, Users } from 'lucide-react';
 import {
   DEFAULT_LESSON,
   fetchPublicResponses,
@@ -13,7 +13,16 @@ import { TeacherDashboardView } from './components/TeacherDashboardView.tsx';
 import { ChristmasLights, ChristmasSky } from './components/ChristmasDecor.tsx';
 import { AiAnalysisView } from './components/AiAnalysisView.tsx';
 import { TeacherAiPanel } from './components/TeacherAiPanel.tsx';
-import type { LessonConfig, StudentResponse, TeacherSessionState } from './types.ts';
+import { StudentEntry } from './components/StudentEntry.tsx';
+import { clearProfile, readProfile, saveProfile } from './lib/studentProfile.ts';
+import type { LessonConfig, StudentProfile, StudentResponse, TeacherSessionState } from './types.ts';
+
+const TABS = [
+  { key: 'activity', label: '감상·활동지', short: '감상·활동지', stage: '3단계', Icon: Headphones },
+  { key: 'gallery', label: '서로의 관점', short: '서로의 관점', stage: '3단계 정리', Icon: Users },
+  { key: 'ai', label: 'AI 또래 음악 분석', short: 'AI 분석', stage: '4단계', Icon: Sparkles },
+  { key: 'teacher', label: '교사 확인', short: '교사 확인', stage: '선생님', Icon: ClipboardCheck },
+] as const;
 
 type ActiveTab = 'activity' | 'gallery' | 'ai' | 'teacher';
 
@@ -51,6 +60,7 @@ export default function App() {
     authenticated: false,
     passwordConfigured: false,
   });
+  const [profile, setProfile] = useState<StudentProfile | null>(() => readProfile());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
@@ -168,6 +178,32 @@ export default function App() {
     }
   };
 
+  // 앞서 다른 학생이 쓴 글이 이 기기에 연결돼 있으면 끊기
+  useEffect(() => {
+    if (profile && myResponse && myResponse.studentId !== profile.studentId) {
+      handleStartNewStudent();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, myResponse]);
+
+  const handleEnter = (next: StudentProfile) => {
+    saveProfile(next);
+    setProfile(next);
+    const creds = readStoredCreds();
+    setMyCreds(creds);
+    if (!creds) setMyResponse(null);
+    setActiveTab((t) => (t === 'teacher' ? 'activity' : t));
+  };
+
+  const handleLeave = () => {
+    if (!window.confirm('나갈까요? 이 기기에서 내 활동 연결이 지워져요. (저장한 글은 선생님께 그대로 남아요)')) return;
+    clearProfile();
+    setProfile(null);
+    setMyCreds(null);
+    setMyResponse(null);
+    setActiveTab('activity');
+  };
+
   const scrollToWorksheet = () => {
     setActiveTab('activity');
     window.setTimeout(() => {
@@ -195,10 +231,9 @@ export default function App() {
   return (
     <div className="relative min-h-screen flex flex-col text-slate-900">
       <ChristmasSky />
-      {/* Top Bar Contract: 3 zones separated by gap-8 */}
-      <header className="xmas-velvet relative z-20 border-b border-xmas-gold/40 text-xmas-cream">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3.5 sm:gap-8 sm:px-6 sm:py-4">
-          {/* Zone 1: Single text element wordmark */}
+      <header className="xmas-velvet relative z-20 text-xmas-cream">
+        <ChristmasLights top />
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 pt-5 pb-3 sm:px-6">
           <button
             type="button"
             onClick={() => setActiveTab('activity')}
@@ -208,108 +243,66 @@ export default function App() {
             <span className="gold-shimmer">음악으로 시대 읽기</span>
           </button>
 
-          {/* Zone 2: 4 concise single-line text nav links */}
-          <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-xmas-blush" aria-label="주 메뉴">
-            <button
-              type="button"
-              onClick={scrollToGuide}
-              className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'activity' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
-              }`}
-            >
-              수업 안내
-            </button>
-            <button
-              type="button"
-              onClick={scrollToWorksheet}
-              className="transition-colors hover:text-white whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              감상·활동지
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('gallery')}
-              className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'gallery' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
-              }`}
-            >
-              서로의 관점
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('ai')}
-              className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'ai' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
-              }`}
-            >
-              AI 또래 음악 분석
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('teacher')}
-              className={`transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                activeTab === 'teacher' ? 'text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'hover:text-white'
-              }`}
-            >
-              교사 확인
-            </button>
-          </nav>
-
-          {/* Zone 3: 1 primary action */}
-          <div className="flex items-center shrink-0">
-            <button
-              type="button"
-              onClick={scrollToWorksheet}
-              className="gold-button min-h-[44px] rounded-lg px-4 py-2 text-xs font-semibold transition whitespace-nowrap shrink-0 cursor-pointer sm:text-sm"
-            >
-              ✦ 감성 문장 쓰기
-            </button>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            {profile && (
+              <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-xmas-gold/40 bg-white/10 py-1 pl-3 pr-1 text-xs sm:text-sm">
+                <UserRound className="h-4 w-4 shrink-0 text-xmas-gold" aria-hidden="true" />
+                <span className="hidden font-mono text-xmas-blush sm:inline">{profile.studentId}</span>
+                <strong className="truncate font-semibold">{profile.studentName}</strong>
+                <button
+                  type="button"
+                  onClick={handleLeave}
+                  className="ml-1 inline-flex min-h-[32px] items-center gap-1 rounded-full px-2.5 text-xs text-xmas-blush hover:bg-white/15 hover:text-white"
+                >
+                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>나가기</span>
+                </button>
+              </div>
+            )}
+            {profile && (
+              <button
+                type="button"
+                onClick={scrollToWorksheet}
+                className="gold-button hidden min-h-[44px] rounded-lg px-4 py-2 text-sm font-semibold transition whitespace-nowrap shrink-0 cursor-pointer md:inline-flex md:items-center"
+              >
+                ✦ 감성 문장 쓰기
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Mobile navigation row */}
-        <nav
-          className="grid grid-cols-4 border-t border-xmas-gold/20 px-1 md:hidden"
-          aria-label="모바일 메뉴"
-        >
-          <button
-            type="button"
-            onClick={() => setActiveTab('activity')}
-            className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
-              activeTab === 'activity' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
-            }`}
-          >
-            감상·활동지
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('gallery')}
-            className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
-              activeTab === 'gallery' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
-            }`}
-          >
-            서로의 관점
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('ai')}
-            className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
-              activeTab === 'ai' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
-            }`}
-          >
-            AI 분석
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('teacher')}
-            className={`min-h-[44px] px-2 py-2.5 text-center text-xs whitespace-nowrap ${
-              activeTab === 'teacher' ? 'font-semibold text-xmas-gold underline decoration-xmas-gold underline-offset-8' : 'font-medium text-xmas-blush'
-            }`}
-          >
-            교사 확인
-          </button>
+        {/* 브라우저 탭처럼 지금 열린 화면이 본문과 이어져 보이게 */}
+        <nav className="mx-auto max-w-6xl px-2 sm:px-6" aria-label="주 메뉴">
+          <div role="tablist" className="grid grid-cols-4 items-end gap-1 sm:flex sm:gap-1.5">
+            {TABS.map(({ key, label, short, stage, Icon }) => {
+              const active = activeTab === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setActiveTab(key)}
+                  className={`xmas-tab relative flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-t-xl px-2 text-center transition-colors sm:flex-row sm:gap-2 sm:px-5 ${
+                    active
+                      ? 'xmas-tab-active z-10 min-h-[58px] bg-slate-50 text-slate-900 sm:min-h-[52px]'
+                      : 'min-h-[50px] bg-black/20 text-xmas-blush hover:bg-white/10 hover:text-white sm:min-h-[44px]'
+                  }`}
+                >
+                  {active && <span className="absolute inset-x-3 top-0 h-[3px] rounded-b bg-xmas-gold" aria-hidden="true" />}
+                  <Icon className={`h-4 w-4 shrink-0 ${active ? 'text-xmas-crimson' : ''}`} aria-hidden="true" />
+                  <span className="flex min-w-0 flex-col sm:items-start">
+                    <span className={`truncate text-[11px] leading-tight sm:text-sm ${active ? 'font-bold' : 'font-medium'}`}>
+                      <span className="sm:hidden">{short}</span>
+                      <span className="hidden sm:inline">{label}</span>
+                    </span>
+                    <span className={`hidden text-[10px] leading-tight sm:block ${active ? 'text-slate-500' : 'text-xmas-blush/70'}`}>{stage}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </nav>
-        <ChristmasLights />
       </header>
 
       {/* Main Content */}
@@ -330,15 +323,17 @@ export default function App() {
               다시 불러오기
             </button>
           </div>
-        ) : activeTab === 'activity' ? (
+        ) : !profile && activeTab !== 'teacher' ? (
+          <StudentEntry onEnter={handleEnter} onGoTeacher={() => setActiveTab('teacher')} />
+        ) : activeTab === 'activity' && profile ? (
           <StudentActivityView
             lesson={lesson}
+            profile={profile}
             storageMode={storageMode}
             statusMessage={statusMessage}
             myResponse={myResponse}
             myEditToken={myCreds?.token ?? null}
             onSaved={handleSavedResponse}
-            onStartNewStudent={handleStartNewStudent}
             onGoToGallery={() => setActiveTab('gallery')}
             formRef={formRef}
           />
@@ -351,8 +346,8 @@ export default function App() {
             onRefresh={handleRefreshGallery}
             onGoToWrite={scrollToWorksheet}
           />
-        ) : activeTab === 'ai' ? (
-          <AiAnalysisView />
+        ) : activeTab === 'ai' && profile ? (
+          <AiAnalysisView key={`${profile.studentId}-${profile.studentName}`} profile={profile} />
         ) : (
           <>
           <TeacherDashboardView

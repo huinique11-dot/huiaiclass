@@ -66,9 +66,36 @@ interface ResponseRow {
   is_public: number;
   rubric_level: string;
   teacher_feedback: string;
+  era_title?: string;
+  song_title?: string;
   edit_token?: string;
   created_at: string;
   updated_at: string;
+}
+
+interface EraSongInput {
+  id: string;
+  title: string;
+  url: string;
+}
+
+interface EraInput {
+  id: string;
+  title: string;
+  historicalContext: string;
+  artworkNote: string;
+  artworks: ArtworkInput[];
+  songs: EraSongInput[];
+}
+
+interface EraRow {
+  id: string;
+  sort_index: number;
+  title: string;
+  historical_context: string;
+  artwork_note: string;
+  artworks_json: string;
+  songs_json: string;
 }
 
 const DEFAULT_LESSON = {
@@ -145,6 +172,130 @@ async function ensureLessonArtworksTable(db: D1Database): Promise<void> {
     .run();
 }
 
+// 여러 시대(시대별 배경·시각 자료 공통 + 대표곡 여러 곡)와 학생 선택 기록용 스키마 (기존 데이터는 그대로 둠)
+let schemaReady = false;
+async function ensureSchema(db: D1Database): Promise<void> {
+  if (schemaReady) return;
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS lesson_eras (id TEXT PRIMARY KEY, sort_index INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL, historical_context TEXT NOT NULL DEFAULT '', artwork_note TEXT NOT NULL DEFAULT '', artworks_json TEXT NOT NULL DEFAULT '[]', songs_json TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL)",
+    )
+    .run();
+  for (const col of ['era_title', 'song_title']) {
+    try {
+      await db.prepare(`ALTER TABLE student_responses ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`).run();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (!msg.includes('duplicate column') && !msg.includes('no such table')) throw err;
+    }
+  }
+  schemaReady = true;
+}
+
+function parseJsonArray(raw: string): unknown[] {
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+function mapEraRow(row: EraRow): EraInput {
+  return {
+    id: row.id,
+    title: row.title,
+    historicalContext: row.historical_context,
+    artworkNote: row.artwork_note,
+    artworks: parseJsonArray(row.artworks_json) as ArtworkInput[],
+    songs: parseJsonArray(row.songs_json) as EraSongInput[],
+  };
+}
+
+async function readEras(db: D1Database): Promise<EraInput[]> {
+  const res = await db
+    .prepare('SELECT id, sort_index, title, historical_context, artwork_note, artworks_json, songs_json FROM lesson_eras ORDER BY sort_index ASC')
+    .all<EraRow>();
+  const eras = (res.results ?? []).map(mapEraRow);
+  if (eras.length > 0) return eras;
+
+  // 처음 한 번: 기존에 저장해 둔 단일 시대 자료를 첫 번째 시대로 옮겨 담기(원본은 그대로 둠)
+  const legacy = await db
+    .prepare('SELECT era_title, song_title, audio_or_link_url, historical_context, artwork_note, is_customized FROM lesson_settings WHERE id = 1')
+    .first<{ era_title: string; song_title: string; audio_or_link_url: string; historical_context: string; artwork_note: string; is_customized: number }>();
+  if (!legacy || legacy.is_customized !== 1) return [];
+  const artworks = await readLessonArtworks(db);
+  const era: EraInput = {
+    id: crypto.randomUUID(),
+    title: legacy.era_title,
+    historicalContext: legacy.historical_context,
+    artworkNote: legacy.artwork_note.includes('[확인 필요]') ? '' : legacy.artwork_note,
+    artworks,
+    songs: legacy.song_title ? [{ id: crypto.randomUUID(), title: legacy.song_title, url: legacy.audio_or_link_url }] : [],
+  };
+  await writeEras(db, [era]);
+  return [era];
+}
+
+async function writeEras(db: D1Database, eras: EraInput[]): Promise<void> {
+  const now = new Date().toISOString();
+  await db.prepare('DELETE FROM lesson_eras').run();
+  for (let i = 0; i < eras.length; i++) {
+    const e = eras[i];
+    await db
+      .prepare(
+        'INSERT INTO lesson_eras (id, sort_index, title, historical_context, artwork_note, artworks_json, songs_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .bind(e.id, i, e.title, e.historicalContext, e.artworkNote, JSON.stringify(e.artworks), JSON.stringify(e.songs), now)
+      .run();
+  }
+}
+
+// 교사가 보낸 시대 목록 정리. 오류가 있으면 문자열 반환
+function sanitizeEras(raw: unknown): EraInput[] | string {
+  if (!Array.isArray(raw)) return [];
+  const eras: EraInput[] = [];
+  for (const [ei, item] of raw.slice(0, 10).entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const r = item as Record<string, unknown>;
+    const title = cleanText(r.title, 120);
+    if (!title) return `시대 ${ei + 1}의 이름을 입력해 주세요.`;
+    const songs: EraSongInput[] = [];
+    for (const [si, sv] of (Array.isArray(r.songs) ? r.songs : []).slice(0, 10).entries()) {
+      if (!sv || typeof sv !== 'object' || Array.isArray(sv)) continue;
+      const sr = sv as Record<string, unknown>;
+      const songTitle = cleanText(sr.title, 160);
+      const urlCheck = sanitizeHttpUrl(sr.url);
+      if (!urlCheck.valid) return `「${title}」 ${si + 1}번 곡의 링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.`;
+      if (!songTitle && !urlCheck.value) continue;
+      songs.push({ id: cleanText(sr.id, 64) || crypto.randomUUID(), title: songTitle || `감상곡 ${si + 1}`, url: urlCheck.value });
+    }
+    const artworks: ArtworkInput[] = [];
+    const used = new Set<number>();
+    for (const [ai, av] of (Array.isArray(r.artworks) ? r.artworks : []).slice(0, 4).entries()) {
+      if (!av || typeof av !== 'object' || Array.isArray(av)) continue;
+      const ar = av as Record<string, unknown>;
+      const slotIndex = typeof ar.slotIndex === 'number' && Number.isInteger(ar.slotIndex) && ar.slotIndex >= 0 && ar.slotIndex <= 3 ? ar.slotIndex : ai;
+      if (used.has(slotIndex)) continue;
+      used.add(slotIndex);
+      const imageCheck = sanitizeArtworkImageUrl(ar.imageUrl);
+      if (!imageCheck.valid) return `「${title}」 시각 자료 ${slotIndex + 1}의 이미지 주소가 올바르지 않습니다.`;
+      const aTitle = cleanText(ar.title, 120);
+      const description = cleanText(ar.description, 1200);
+      if (aTitle || imageCheck.value || description) artworks.push({ slotIndex, title: aTitle, imageUrl: imageCheck.value, description });
+    }
+    eras.push({
+      id: cleanText(r.id, 64) || crypto.randomUUID(),
+      title,
+      historicalContext: cleanText(r.historicalContext, 3000),
+      artworkNote: cleanText(r.artworkNote, 600),
+      artworks,
+      songs,
+    });
+  }
+  return eras;
+}
+
 async function readLessonArtworks(db: D1Database): Promise<ArtworkInput[]> {
   try {
     const res = await db
@@ -166,8 +317,9 @@ async function readLessonArtworks(db: D1Database): Promise<ArtworkInput[]> {
   }
 }
 
-function mapLessonRow(row: LessonRow, artworks: ArtworkInput[]) {
+function mapLessonRow(row: LessonRow, artworks: ArtworkInput[], eras: EraInput[] = []) {
   return {
+    eras,
     eraTitle: row.era_title,
     songTitle: row.song_title,
     audioOrLinkUrl: row.audio_or_link_url,
@@ -192,6 +344,8 @@ function mapTeacherResponseRow(row: ResponseRow) {
     isPublic: row.is_public === 1,
     rubricLevel: row.rubric_level,
     teacherFeedback: row.teacher_feedback,
+    eraTitle: row.era_title ?? '',
+    songTitle: row.song_title ?? '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -208,6 +362,8 @@ function mapPublicResponseRow(row: ResponseRow) {
     isPublic: true,
     rubricLevel: '',
     teacherFeedback: '',
+    eraTitle: row.era_title ?? '',
+    songTitle: row.song_title ?? '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -335,6 +491,8 @@ export default {
     const isHttps = url.protocol === 'https:';
 
     try {
+      await ensureSchema(env.DB);
+
       // 4단계 또래 음악 H-A-H 활동 (/api/ai/*)
       const aiResponse = await handleAiRoutes(request, env, url, {
         jsonResponse,
@@ -401,7 +559,8 @@ export default {
           ).first<LessonRow>(),
           readLessonArtworks(env.DB),
         ]);
-        return jsonResponse(row ? mapLessonRow(row, artworks) : { ...DEFAULT_LESSON, artworks });
+        const eras = await readEras(env.DB);
+        return jsonResponse(row ? mapLessonRow(row, artworks, eras) : { ...DEFAULT_LESSON, artworks, eras });
       }
 
       if (pathname === '/api/lesson' && request.method === 'PUT') {
@@ -413,10 +572,16 @@ export default {
           return jsonResponse({ error: '요청 형식이 올바르지 않습니다.' }, 400);
         }
 
-        const eraTitle = cleanText(body.eraTitle, 120);
-        const songTitle = cleanText(body.songTitle, 160);
-        const urlCheck = sanitizeHttpUrl(body.audioOrLinkUrl);
-        const historicalContext = cleanText(body.historicalContext, 2000);
+        const erasResult = sanitizeEras(body.eras);
+        if (typeof erasResult === 'string') {
+          return jsonResponse({ error: erasResult }, 400);
+        }
+        const firstEra = erasResult[0];
+        const firstSong = firstEra?.songs[0];
+        const eraTitle = cleanText(body.eraTitle, 120) || cleanText(firstEra?.title, 120);
+        const songTitle = cleanText(body.songTitle, 160) || cleanText(firstSong?.title, 160) || '-';
+        const urlCheck = sanitizeHttpUrl(body.audioOrLinkUrl ?? firstSong?.url ?? '');
+        const historicalContext = cleanText(body.historicalContext, 2000) || cleanText(firstEra?.historicalContext, 2000) || '-';
         const artworkNote = cleanText(body.artworkNote, 600);
         const empathyPrompt = cleanText(body.empathyPrompt, 600);
         const shareWithClass = body.shareWithClass === true ? 1 : 0;
@@ -492,6 +657,10 @@ export default {
             .run();
         }
 
+        if (Array.isArray(body.eras)) {
+          await writeEras(env.DB, erasResult);
+        }
+
         const [updated, savedArtworks] = await Promise.all([
           env.DB.prepare(
             'SELECT id, era_title, song_title, audio_or_link_url, historical_context, artwork_note, empathy_prompt, share_with_class, is_customized, updated_at FROM lesson_settings WHERE id = 1',
@@ -499,7 +668,8 @@ export default {
           readLessonArtworks(env.DB),
         ]);
 
-        return jsonResponse(updated ? mapLessonRow(updated, savedArtworks) : { ...DEFAULT_LESSON, artworks: savedArtworks });
+        const savedEras = await readEras(env.DB);
+        return jsonResponse(updated ? mapLessonRow(updated, savedArtworks, savedEras) : { ...DEFAULT_LESSON, artworks: savedArtworks, eras: savedEras });
       }
 
       // Public shared gallery (only when share_with_class=1 AND response is_public=1)
@@ -514,7 +684,7 @@ export default {
         }
 
         const result = await env.DB.prepare(
-          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, created_at, updated_at FROM student_responses WHERE is_public = 1 ORDER BY updated_at DESC LIMIT 200',
+          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, era_title, song_title, created_at, updated_at FROM student_responses WHERE is_public = 1 ORDER BY updated_at DESC LIMIT 200',
         ).all<ResponseRow>();
 
         return jsonResponse((result.results ?? []).map(mapPublicResponseRow));
@@ -529,7 +699,7 @@ export default {
         }
 
         const row = await env.DB.prepare(
-          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, edit_token, created_at, updated_at FROM student_responses WHERE id = ?',
+          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, era_title, song_title, edit_token, created_at, updated_at FROM student_responses WHERE id = ?',
         )
           .bind(id)
           .first<ResponseRow>();
@@ -554,6 +724,8 @@ export default {
         const reflectionText = cleanText(body.reflectionText, 2000);
         const presentConnection = cleanText(body.presentConnection, 1000);
         const isPublic = body.isPublic === true ? 1 : 0;
+        const selEraTitle = cleanText(body.eraTitle, 120);
+        const selSongTitle = cleanText(body.songTitle, 160);
 
         if (!studentId) {
           return jsonResponse({ error: '학번을 입력해 주세요.' }, 400);
@@ -570,7 +742,7 @@ export default {
         const now = new Date().toISOString();
 
         await env.DB.prepare(
-          'INSERT INTO student_responses (id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, edit_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO student_responses (id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, edit_token, created_at, updated_at, era_title, song_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
           .bind(
             id,
@@ -585,11 +757,13 @@ export default {
             editToken,
             now,
             now,
+            selEraTitle,
+            selSongTitle,
           )
           .run();
 
         const created = await env.DB.prepare(
-          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, created_at, updated_at FROM student_responses WHERE id = ?',
+          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, era_title, song_title, created_at, updated_at FROM student_responses WHERE id = ?',
         )
           .bind(id)
           .first<ResponseRow>();
@@ -632,6 +806,8 @@ export default {
         const reflectionText = cleanText(body.reflectionText, 2000);
         const presentConnection = cleanText(body.presentConnection, 1000);
         const isPublic = body.isPublic === true ? 1 : 0;
+        const selEraTitle = cleanText(body.eraTitle, 120);
+        const selSongTitle = cleanText(body.songTitle, 160);
 
         if (!studentId || !studentName || !reflectionText) {
           return jsonResponse({ error: '학번, 이름(별칭), 감성 문장은 필수 입력 항목입니다.' }, 400);
@@ -639,13 +815,13 @@ export default {
 
         const now = new Date().toISOString();
         await env.DB.prepare(
-          'UPDATE student_responses SET student_id = ?, student_name = ?, class_group = ?, reflection_text = ?, present_connection = ?, is_public = ?, updated_at = ? WHERE id = ?',
+          'UPDATE student_responses SET student_id = ?, student_name = ?, class_group = ?, reflection_text = ?, present_connection = ?, is_public = ?, era_title = ?, song_title = ?, updated_at = ? WHERE id = ?',
         )
-          .bind(studentId, studentName, classGroup, reflectionText, presentConnection, isPublic, now, id)
+          .bind(studentId, studentName, classGroup, reflectionText, presentConnection, isPublic, selEraTitle, selSongTitle, now, id)
           .run();
 
         const updated = await env.DB.prepare(
-          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, created_at, updated_at FROM student_responses WHERE id = ?',
+          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, era_title, song_title, created_at, updated_at FROM student_responses WHERE id = ?',
         )
           .bind(id)
           .first<ResponseRow>();
@@ -660,7 +836,7 @@ export default {
         }
 
         const result = await env.DB.prepare(
-          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, created_at, updated_at FROM student_responses ORDER BY updated_at DESC LIMIT 500',
+          'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, era_title, song_title, created_at, updated_at FROM student_responses ORDER BY updated_at DESC LIMIT 500',
         ).all<ResponseRow>();
 
         return jsonResponse((result.results ?? []).map(mapTeacherResponseRow));
@@ -707,7 +883,7 @@ export default {
           }
 
           const updated = await env.DB.prepare(
-            'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, created_at, updated_at FROM student_responses WHERE id = ?',
+            'SELECT id, student_id, student_name, class_group, reflection_text, present_connection, is_public, rubric_level, teacher_feedback, era_title, song_title, created_at, updated_at FROM student_responses WHERE id = ?',
           )
             .bind(id)
             .first<ResponseRow>();

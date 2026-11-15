@@ -134,6 +134,30 @@
     animation-delay: var(--delay, 0s);
   }
 
+  .xmas-lights--top {
+    top: -4px;
+    bottom: auto;
+  }
+
+  /* 브라우저 탭: 열린 탭은 본문 색과 이어지고 아래 모서리가 둥글게 퍼짐 */
+  .xmas-tab-active::before,
+  .xmas-tab-active::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    width: 12px;
+    height: 12px;
+    pointer-events: none;
+  }
+  .xmas-tab-active::before {
+    left: -12px;
+    background: radial-gradient(circle at 0 0, transparent 11.5px, var(--color-slate-50) 12px);
+  }
+  .xmas-tab-active::after {
+    right: -12px;
+    background: radial-gradient(circle at 100% 0, transparent 11.5px, var(--color-slate-50) 12px);
+  }
+
   /* 배경 반짝이 & 눈송이 */
   .xmas-sky {
     position: fixed;

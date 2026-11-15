@@ -7,7 +7,30 @@ export interface ArtworkItem {
   description: string;
 }
 
+export interface EraSong {
+  id: string;
+  title: string;
+  url: string;
+}
+
+// 시대마다 역사적 배경·미술 시각 자료는 공통, 대표 감상곡은 여러 곡 중 선택
+export interface Era {
+  id: string;
+  title: string;
+  historicalContext: string;
+  artworkNote: string;
+  artworks: ArtworkItem[];
+  songs: EraSong[];
+}
+
+export interface StudentProfile {
+  studentId: string;
+  studentName: string;
+  classGroup: string;
+}
+
 export interface LessonConfig {
+  eras: Era[];
   eraTitle: string;
   songTitle: string;
   audioOrLinkUrl: string;
@@ -30,6 +53,8 @@ export interface StudentResponse {
   isPublic: boolean;
   rubricLevel: RubricLevel;
   teacherFeedback: string;
+  eraTitle?: string;
+  songTitle?: string;
   createdAt: string;
   updatedAt: string;
 }

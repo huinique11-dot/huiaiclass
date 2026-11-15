@@ -177,7 +177,12 @@ export const ClassGalleryView: React.FC<ClassGalleryViewProps> = ({
                     <span className="font-mono tabular-nums">{formatTime(item.updatedAt)}</span>
                   </div>
 
-                  <p className="mt-4 whitespace-pre-line text-sm leading-relaxed text-slate-800">
+                  {(item.eraTitle || item.songTitle) && (
+                    <p className="mt-3 inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">
+                      {[item.eraTitle, item.songTitle].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                  <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-800">
                     {item.reflectionText}
                   </p>
                 </div>

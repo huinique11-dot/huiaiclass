@@ -1,27 +1,35 @@
-import React, { useEffect, useState } from 'react';
-import {
-  AlertCircle,
-  BookOpen,
-  CheckCircle2,
-  Clock,
-  ExternalLink,
-  Headphones,
-  Lock,
-  PencilLine,
-} from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, CheckCircle2, Clock, Lock, Music2, PencilLine, UserRound } from 'lucide-react';
 import { submitStudentResponse, type StorageMode } from '../lib/classroomApi.ts';
-import { isValidHttpUrl, parseYouTubeUrl } from '../lib/youtube.ts';
-import type { LessonConfig, StudentResponse } from '../types.ts';
-import { ArtworkGallery } from './ArtworkGallery.tsx';
+import type { Era, LessonConfig, StudentProfile, StudentResponse } from '../types.ts';
+import { ListeningMaterials } from './ListeningMaterials.tsx';
+import { FourPStrip, StandardsBox } from './LessonGuide.tsx';
+
+const SELECTION_KEY = 'music_era_selection_v1';
+
+// 시대 목록이 아직 없으면(예전 단일 자료) 하나의 시대로 보여 줌
+export function lessonEras(lesson: LessonConfig): Era[] {
+  if (lesson.eras && lesson.eras.length > 0) return lesson.eras;
+  return [
+    {
+      id: 'legacy',
+      title: lesson.eraTitle,
+      historicalContext: lesson.historicalContext,
+      artworkNote: lesson.artworkNote,
+      artworks: lesson.artworks,
+      songs: lesson.songTitle ? [{ id: 'legacy-song', title: lesson.songTitle, url: lesson.audioOrLinkUrl }] : [],
+    },
+  ];
+}
 
 interface StudentActivityViewProps {
   lesson: LessonConfig;
+  profile: StudentProfile;
   storageMode: StorageMode;
   statusMessage: string;
   myResponse: StudentResponse | null;
   myEditToken: string | null;
   onSaved: (saved: StudentResponse, editToken?: string) => void;
-  onStartNewStudent: () => void;
   onGoToGallery: () => void;
   formRef: React.RefObject<HTMLFormElement | null>;
 }
@@ -41,18 +49,36 @@ function formatDateTime(iso: string): string {
 
 export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
   lesson,
+  profile,
   storageMode,
   statusMessage,
   myResponse,
   myEditToken,
   onSaved,
-  onStartNewStudent,
   onGoToGallery,
   formRef,
 }) => {
-  const [studentId, setStudentId] = useState(myResponse?.studentId ?? '');
-  const [studentName, setStudentName] = useState(myResponse?.studentName ?? '');
-  const [classGroup, setClassGroup] = useState(myResponse?.classGroup ?? '');
+  const eras = useMemo(() => lessonEras(lesson), [lesson]);
+  const [selection, setSelection] = useState<{ eraId: string; songId: string }>(() => {
+    try {
+      const raw = window.localStorage.getItem(SELECTION_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {
+      // 무시
+    }
+    return { eraId: '', songId: '' };
+  });
+  const selectedEra = eras.find((e) => e.id === selection.eraId) ?? eras[0];
+  const selectedSong = selectedEra?.songs.find((s) => s.id === selection.songId) ?? selectedEra?.songs[0];
+  const selectMaterial = (eraId: string, songId: string) => {
+    const next = { eraId, songId };
+    setSelection(next);
+    try {
+      window.localStorage.setItem(SELECTION_KEY, JSON.stringify(next));
+    } catch {
+      // 무시
+    }
+  };
   const [reflectionText, setReflectionText] = useState(myResponse?.reflectionText ?? '');
   const [presentConnection, setPresentConnection] = useState(myResponse?.presentConnection ?? '');
   const [isPublic, setIsPublic] = useState(myResponse?.isPublic ?? false);
@@ -64,17 +90,11 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
 
   useEffect(() => {
     if (myResponse) {
-      setStudentId(myResponse.studentId);
-      setStudentName(myResponse.studentName);
-      setClassGroup(myResponse.classGroup);
       setReflectionText(myResponse.reflectionText);
       setPresentConnection(myResponse.presentConnection);
       setIsPublic(myResponse.isPublic);
       setIsEditing(false);
     } else {
-      setStudentId('');
-      setStudentName('');
-      setClassGroup('');
       setReflectionText('');
       setPresentConnection('');
       setIsPublic(false);
@@ -87,18 +107,8 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
     setErrorMsg('');
     setStatusNotice('');
 
-    const trimmedId = studentId.trim();
-    const trimmedName = studentName.trim();
     const trimmedReflection = reflectionText.trim();
 
-    if (!trimmedId) {
-      setErrorMsg('학번을 입력해 주세요.');
-      return;
-    }
-    if (!trimmedName) {
-      setErrorMsg('이름(별칭)을 입력해 주세요.');
-      return;
-    }
     if (!trimmedReflection) {
       setErrorMsg('시대 상황에 대입한 감성 문장을 입력해 주세요.');
       return;
@@ -109,12 +119,14 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
       const result = await submitStudentResponse({
         id: myResponse?.id,
         editToken: myEditToken ?? undefined,
-        studentId: trimmedId,
-        studentName: trimmedName,
-        classGroup: classGroup.trim(),
+        studentId: profile.studentId,
+        studentName: profile.studentName,
+        classGroup: profile.classGroup,
         reflectionText: trimmedReflection,
         presentConnection: presentConnection.trim(),
         isPublic,
+        eraTitle: selectedEra?.title ?? '',
+        songTitle: selectedSong?.title ?? '',
       });
 
       onSaved(result.response, result.editToken);
@@ -133,9 +145,6 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
     }
   };
 
-  const needsSetup = (val: string) => val.includes('[확인 필요]');
-  const youtubeInfo = parseYouTubeUrl(lesson.audioOrLinkUrl);
-  const hasExternalUrl = isValidHttpUrl(lesson.audioOrLinkUrl);
 
   return (
     <div className="space-y-8 sm:space-y-10">
@@ -144,9 +153,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <span>중학교 2학년 음악(읽걷쓰 · 인공지능 · 미술 융합)</span>
           <span aria-hidden="true">·</span>
-          <span>3단계 (5~6차시)</span>
-          <span aria-hidden="true">·</span>
-          <span className="font-mono">성취기준 [9음02-02], [9음02-03]</span>
+          <span>3단계 (5~6차시) 시대 상황 대입을 통한 공감과 개인 감성 표현</span>
         </div>
 
         <h1 className="mt-3 max-w-3xl text-2xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
@@ -161,29 +168,13 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
           </strong>
         </p>
 
-        {/* 3-Step Flow Strip */}
-        <div className="mt-6 grid grid-cols-1 gap-4 border-t border-slate-200 pt-5 sm:mt-7 sm:grid-cols-3 sm:pt-6">
-          <div>
-            <p className="font-mono text-xs text-slate-500">01. 들어가기</p>
-            <p className="mt-1 text-sm font-medium text-slate-900">시대 배경과 삶의 상황 되짚기</p>
-            <p className="mt-1 text-sm leading-relaxed text-slate-600">
-              탐구할 시대의 역사적 배경과 당시 사람들의 삶을 먼저 살펴봅니다.
-            </p>
-          </div>
-          <div>
-            <p className="font-mono text-xs text-slate-500">02. 활동</p>
-            <p className="mt-1 text-sm font-medium text-slate-900">시대 상황에 나를 대입해 감상하기</p>
-            <p className="mt-1 text-sm leading-relaxed text-slate-600">
-              그 시대를 살아가는 사람이라 상상하며 음악 속 마음과 욕망에 공감합니다.
-            </p>
-          </div>
-          <div>
-            <p className="font-mono text-xs text-slate-500">03. 정리</p>
-            <p className="mt-1 text-sm font-medium text-slate-900">감성 문장 작성과 관점 나누기</p>
-            <p className="mt-1 text-sm leading-relaxed text-slate-600">
-              느낀 감성을 나만의 문장으로 기록해 교사·친구들과 시선을 나눕니다.
-            </p>
-          </div>
+        <div className="mt-5 max-w-4xl">
+          <StandardsBox />
+        </div>
+
+        <div className="mt-6 border-t border-slate-200 pt-5 sm:mt-7 sm:pt-6">
+          <p className="mb-3 text-xs font-semibold text-slate-500">프로젝트 흐름 (4P · 관찰 → 질문 → 탐구 → 행동)</p>
+          <FourPStrip current="P3" nowLabel="3단계 시대 상황에 나를 대입해 감성 문장 쓰기" />
         </div>
       </section>
 
@@ -206,116 +197,8 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
 
       {/* Main Two-Zone Workspace */}
       <section id="workspace" className="grid grid-cols-1 items-start gap-6 sm:gap-8 lg:grid-cols-12">
-        {/* Left Zone: Lesson Context & Listening Material */}
-        <aside className="rounded-xl border border-slate-200 bg-white lg:col-span-5">
-          <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
-            <div className="flex items-center gap-2 text-slate-900">
-              <Headphones className="h-4 w-4 text-slate-700" aria-hidden="true" />
-              <h2 className="text-lg font-semibold">오늘의 감상 자료</h2>
-            </div>
-            <p className="mt-1 text-xs text-slate-500">
-              자료와 시대 배경을 확인한 뒤 활동지에 감성 문장을 작성해 주세요.
-            </p>
-          </div>
-
-          <div className="divide-y divide-slate-200 px-5 sm:px-6">
-            <div className="py-4">
-              <p className="text-xs font-medium text-slate-500">탐구 시대</p>
-              <p
-                className={`mt-1 text-sm font-medium leading-relaxed ${
-                  needsSetup(lesson.eraTitle) ? 'text-amber-800' : 'text-slate-900'
-                }`}
-              >
-                {lesson.eraTitle}
-              </p>
-            </div>
-
-            <div className="py-4">
-              <p className="text-xs font-medium text-slate-500">시대별 대표 감상곡</p>
-              <p
-                className={`mt-1 text-sm font-medium leading-relaxed ${
-                  needsSetup(lesson.songTitle) ? 'text-amber-800' : 'text-slate-900'
-                }`}
-              >
-                {lesson.songTitle}
-              </p>
-              {youtubeInfo ? (
-                <div className="mt-3 space-y-2.5">
-                  <div className="aspect-video w-full overflow-hidden rounded-lg bg-slate-900">
-                    <iframe
-                      src={youtubeInfo.embedUrl}
-                      title={`${lesson.songTitle} 감상 영상`}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      referrerPolicy="strict-origin-when-cross-origin"
-                      allowFullScreen
-                      className="h-full w-full border-0"
-                    />
-                  </div>
-                  <a
-                    href={youtubeInfo.watchUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-100 whitespace-nowrap"
-                  >
-                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                    <span>유튜브에서 직접 열기</span>
-                  </a>
-                </div>
-              ) : hasExternalUrl ? (
-                <a
-                  href={lesson.audioOrLinkUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-100 whitespace-nowrap"
-                >
-                  <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                  <span>감상 음원·영상 열기</span>
-                </a>
-              ) : (
-                <p className="mt-1.5 text-xs leading-relaxed text-amber-800">
-                  [확인 필요] 교사 확인 화면에서 유튜브 감상곡 주소를 등록하면 이곳에 영상 미리보기와 링크가 연결됩니다.
-                </p>
-              )}
-            </div>
-
-            <div className="py-4">
-              <p className="text-xs font-medium text-slate-500">역사적 배경과 당시 사람들의 삶</p>
-              <p
-                className={`mt-1.5 whitespace-pre-line text-sm leading-relaxed ${
-                  needsSetup(lesson.historicalContext) ? 'text-amber-800' : 'text-slate-700'
-                }`}
-              >
-                {lesson.historicalContext}
-              </p>
-            </div>
-
-            <div className="py-4">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
-                <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>함께 보는 미술 · 시각 자료</span>
-              </div>
-
-              {lesson.artworks.length > 0 ? (
-                <div className="mt-3 space-y-3">
-                  {lesson.artworkNote.trim() && !needsSetup(lesson.artworkNote) && (
-                    <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">
-                      {lesson.artworkNote}
-                    </p>
-                  )}
-                  <ArtworkGallery artworks={lesson.artworks} />
-                </div>
-              ) : (
-                <p
-                  className={`mt-1.5 whitespace-pre-line text-sm leading-relaxed ${
-                    needsSetup(lesson.artworkNote) ? 'text-amber-800' : 'text-slate-700'
-                  }`}
-                >
-                  {lesson.artworkNote}
-                </p>
-              )}
-            </div>
-          </div>
-        </aside>
+        {/* Left Zone: 시대·감상곡 선택과 시대 공통 자료 */}
+        <ListeningMaterials eras={eras} eraId={selectedEra?.id ?? ''} songId={selectedSong?.id ?? ''} onSelect={selectMaterial} />
 
         {/* Right Zone: Student Reflection Worksheet */}
         <div className="rounded-xl border border-slate-200 bg-white lg:col-span-7">
@@ -326,7 +209,7 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                 <h2 className="text-lg font-semibold">감성 표현 활동지</h2>
               </div>
               <p className="mt-1 text-xs text-slate-500">
-                개인정보 보호를 위해 실명 대신 가상 별칭으로 입력해 주세요. 비공개 글은 교사만 확인할 수 있습니다.
+                비공개 글은 교사만 확인할 수 있습니다.
               </p>
             </div>
 
@@ -341,17 +224,6 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                   className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
                 >
                   내 글 수정하기
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStatusNotice('');
-                    setErrorMsg('');
-                    onStartNewStudent();
-                  }}
-                  className="min-h-[44px] rounded-lg border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 whitespace-nowrap shrink-0"
-                >
-                  다른 별칭으로 새로 쓰기
                 </button>
               </div>
             )}
@@ -419,6 +291,13 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                   </span>
                 </div>
 
+                {(myResponse.eraTitle || myResponse.songTitle) && (
+                  <p className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">
+                    <Music2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {[myResponse.eraTitle, myResponse.songTitle].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+
                 <div>
                   <p className="text-xs font-medium text-slate-500">시대 상황에 대입한 나의 감성 문장</p>
                   <p className="mt-2 whitespace-pre-line text-base leading-relaxed text-slate-900">
@@ -462,50 +341,20 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
               </div>
             ) : (
               <form ref={formRef} onSubmit={handleSubmit} className="space-y-5">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                  <div>
-                    <label htmlFor="studentId" className="block text-sm font-medium text-slate-800">
-                      학번(번호) <span className="text-red-600">*</span>
-                    </label>
-                    <input
-                      id="studentId"
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={20}
-                      value={studentId}
-                      onChange={(e) => setStudentId(e.target.value)}
-                      placeholder="예: 20305"
-                      className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-base text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="studentName" className="block text-sm font-medium text-slate-800">
-                      별칭(이름) <span className="text-red-600">*</span>
-                    </label>
-                    <input
-                      id="studentName"
-                      type="text"
-                      maxLength={30}
-                      value={studentName}
-                      onChange={(e) => setStudentName(e.target.value)}
-                      placeholder="예: 푸른음표 (가상 별칭)"
-                      className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="classGroup" className="block text-sm font-medium text-slate-800">
-                      반 또는 모둠 <span className="text-xs font-normal text-slate-500">(선택)</span>
-                    </label>
-                    <input
-                      id="classGroup"
-                      type="text"
-                      maxLength={40}
-                      value={classGroup}
-                      onChange={(e) => setClassGroup(e.target.value)}
-                      placeholder="예: 2모둠"
-                      className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15 sm:text-sm"
-                    />
-                  </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-200 px-4 py-3 text-sm">
+                  <span className="inline-flex items-center gap-1.5 text-slate-700">
+                    <UserRound className="h-4 w-4 text-slate-500" aria-hidden="true" />
+                    <span className="font-mono text-xs text-slate-500">{profile.studentId}</span>
+                    <strong className="text-slate-900">{profile.studentName}</strong>
+                    {profile.classGroup && <span className="text-xs text-slate-500">· {profile.classGroup}</span>}
+                  </span>
+                  <span className="inline-flex min-w-0 items-center gap-1.5 text-slate-700">
+                    <Music2 className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
+                    <span className="truncate">
+                      {selectedEra?.title}
+                      {selectedSong && <> · {selectedSong.title}</>}
+                    </span>
+                  </span>
                 </div>
 
                 <div>
@@ -575,9 +424,6 @@ export const StudentActivityView: React.FC<StudentActivityViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setStudentId(myResponse.studentId);
-                        setStudentName(myResponse.studentName);
-                        setClassGroup(myResponse.classGroup);
                         setReflectionText(myResponse.reflectionText);
                         setPresentConnection(myResponse.presentConnection);
                         setIsPublic(myResponse.isPublic);
