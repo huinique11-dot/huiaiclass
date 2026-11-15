@@ -269,13 +269,11 @@ function sanitizeEras(raw: unknown): EraInput[] | string {
       songs.push({ id: cleanText(sr.id, 64) || crypto.randomUUID(), title: songTitle || `감상곡 ${si + 1}`, url: urlCheck.value });
     }
     const artworks: ArtworkInput[] = [];
-    const used = new Set<number>();
-    for (const [ai, av] of (Array.isArray(r.artworks) ? r.artworks : []).slice(0, 4).entries()) {
+    // 시대별 시각 자료는 개수 제한 없음(비정상 요청 방지용 상한 100)
+    for (const av of (Array.isArray(r.artworks) ? r.artworks : []).slice(0, 100)) {
       if (!av || typeof av !== 'object' || Array.isArray(av)) continue;
       const ar = av as Record<string, unknown>;
-      const slotIndex = typeof ar.slotIndex === 'number' && Number.isInteger(ar.slotIndex) && ar.slotIndex >= 0 && ar.slotIndex <= 3 ? ar.slotIndex : ai;
-      if (used.has(slotIndex)) continue;
-      used.add(slotIndex);
+      const slotIndex = artworks.length;
       const imageCheck = sanitizeArtworkImageUrl(ar.imageUrl);
       if (!imageCheck.valid) return `「${title}」 시각 자료 ${slotIndex + 1}의 이미지 주소가 올바르지 않습니다.`;
       const aTitle = cleanText(ar.title, 120);

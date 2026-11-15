@@ -16,11 +16,7 @@ export function emptyEra(n: number): Era {
   return { id: newId(), title: `새 시대 ${n}`, historicalContext: '', artworkNote: '', artworks: [], songs: [{ id: newId(), title: '', url: '' }] };
 }
 
-function slotsOf(era: Era): ArtworkItem[] {
-  return [0, 1, 2, 3].map(
-    (i) => era.artworks.find((a) => a.slotIndex === i) ?? { slotIndex: i, title: '', imageUrl: '', description: '' },
-  );
-}
+const renumber = (items: ArtworkItem[]) => items.map((a, i) => ({ ...a, slotIndex: i }));
 
 const inputCls =
   'mt-1 min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none sm:text-sm';
@@ -54,10 +50,16 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
     [next[idx], next[j]] = [next[j], next[idx]];
     onChange(next);
   };
+  // 시각 자료는 개수 제한 없이 추가·삭제 (빈 칸은 저장할 때 빠짐)
   const patchSlot = (slotIndex: number, patch: Partial<ArtworkItem>) => {
-    const slots = slotsOf(era).map((s) => (s.slotIndex === slotIndex ? { ...s, ...patch } : s));
-    patchEra({ artworks: slots.filter((s) => s.title.trim() || s.imageUrl.trim() || s.description.trim()) });
+    patchEra({ artworks: era.artworks.map((a, i) => (i === slotIndex ? { ...a, ...patch } : a)) });
     if (patch.imageUrl !== undefined) setBroken((b) => ({ ...b, [`${era.id}-${slotIndex}`]: false }));
+  };
+  const addSlot = () =>
+    patchEra({ artworks: renumber([...era.artworks, { slotIndex: 0, title: '', imageUrl: '', description: '' }]) });
+  const removeSlot = (slotIndex: number) => {
+    patchEra({ artworks: renumber(era.artworks.filter((_, i) => i !== slotIndex)) });
+    setBroken({});
   };
 
   if (!era) {
@@ -169,7 +171,7 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold text-slate-900">
-              함께 보는 미술 · 시각 자료 <span className="text-xs font-normal text-slate-500">(이 시대 공통 · 2×2, 최대 4점)</span>
+              함께 보는 미술 · 시각 자료 <span className="text-xs font-normal text-slate-500">(이 시대 공통 · 2칸씩 · 개수 제한 없음)</span>
             </p>
             <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="시각 자료 편집 모드">
               {[false, true].map((pv) => (
@@ -183,16 +185,22 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
 
           {preview ? (
             <div className="mx-auto max-w-md rounded-lg border border-slate-200 bg-white p-4">
-              {era.artworks.length > 0 ? <ArtworkGallery artworks={era.artworks} /> : <p className="py-6 text-center text-xs text-slate-500">등록된 자료가 없습니다.</p>}
+              {era.artworks.some((a) => a.title.trim() || a.imageUrl.trim() || a.description.trim()) ? <ArtworkGallery artworks={era.artworks.filter((a) => a.title.trim() || a.imageUrl.trim() || a.description.trim())} /> : <p className="py-6 text-center text-xs text-slate-500">등록된 자료가 없습니다.</p>}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {slotsOf(era).map((slot) => {
+              {era.artworks.map((slot) => {
                 const key = `${era.id}-${slot.slotIndex}`;
                 const ok = isValidHttpUrl(slot.imageUrl.trim()) && !broken[key];
                 return (
                   <div key={key} className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
-                    <p className="font-mono text-xs font-semibold text-slate-700">작품 {slot.slotIndex + 1}</p>
+                    <div className="flex items-center justify-between">
+                      <p className="font-mono text-xs font-semibold text-slate-700">작품 {slot.slotIndex + 1}</p>
+                      <button type="button" onClick={() => removeSlot(slot.slotIndex)} aria-label={`작품 ${slot.slotIndex + 1} 삭제`}
+                        className="inline-flex min-h-[32px] items-center gap-1 rounded px-2 text-xs text-slate-500 hover:bg-red-50 hover:text-red-700">
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> 삭제
+                      </button>
+                    </div>
                     <div className="aspect-[4/3] overflow-hidden rounded-md border border-slate-200 bg-slate-100">
                       {ok ? (
                         <img src={slot.imageUrl.trim()} alt={slot.title || `작품 ${slot.slotIndex + 1}`} referrerPolicy="no-referrer"
@@ -213,6 +221,13 @@ export const EraEditor: React.FC<{ eras: Era[]; onChange: (eras: Era[]) => void 
                 );
               })}
             </div>
+          )}
+
+          {!preview && (
+            <button type="button" onClick={addSlot}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <Plus className="h-4 w-4" aria-hidden="true" /> 시각 자료 추가
+            </button>
           )}
 
           <label className="block">

@@ -230,6 +230,10 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         title: e.title.trim(),
         historicalContext: e.historicalContext.trim(),
         artworkNote: e.artworkNote.trim(),
+        artworks: e.artworks
+          .map((x) => ({ ...x, title: x.title.trim(), imageUrl: x.imageUrl.trim(), description: x.description.trim() }))
+          .filter((x) => x.title || x.imageUrl || x.description)
+          .map((x, i) => ({ ...x, slotIndex: i })),
         songs: e.songs
           .map((s) => ({ ...s, title: s.title.trim(), url: s.url.trim() }))
           .filter((s) => s.title || s.url),
@@ -246,7 +250,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         audioOrLinkUrl: first?.songs[0]?.url ?? '',
         historicalContext: first?.historicalContext || lesson.historicalContext,
         artworkNote: first?.artworkNote ?? '',
-        artworks: first?.artworks ?? [],
+        artworks: (first?.artworks ?? []).slice(0, 4), // 예전 방식 호환용(앞 4개)
         empathyPrompt: empathyPrompt.trim() || lesson.empathyPrompt,
         shareWithClass,
       });
